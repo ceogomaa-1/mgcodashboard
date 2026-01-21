@@ -14,17 +14,17 @@ export default function ConnectRetell() {
   const router = useRouter();
   const params = useParams();
   const clientId = Array.isArray(params.id) ? params.id[0] : params.id;
+
   const supabase = createClient();
-  
-  const [loading, setLoading] = useState(true);
+
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
   const [apiKeyMissing, setApiKeyMissing] = useState(false);
-  
+
   const [clientName, setClientName] = useState('');
   const [isConnected, setIsConnected] = useState(false);
-  
+
   const [formData, setFormData] = useState({
     retell_agent_id: '',
     retell_phone_number: '',
@@ -33,51 +33,48 @@ export default function ConnectRetell() {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        // Check if master API key exists
+        // Check master API key exists
         const { data: settingsData } = await supabase
           .from('platform_settings')
           .select('value')
           .eq('key', 'retell_api_key')
           .maybeSingle();
 
-        if (!settingsData?.value) {
-          setApiKeyMissing(true);
-        }
+        if (!settingsData?.value) setApiKeyMissing(true);
 
-        // Fetch client info
+        // Client name
         const { data: client } = await supabase
           .from('clients')
           .select('business_name')
           .eq('id', clientId)
           .single();
 
-        if (client) {
-          setClientName(client.business_name);
-        }
+        if (client) setClientName(client.business_name);
 
-        // Fetch existing integration
+        // Existing integration (may not exist)
         const { data: integration } = await supabase
           .from('integrations')
           .select('*')
           .eq('client_id', clientId)
-          .single();
+          .maybeSingle();
 
         if (integration) {
-          setIsConnected(integration.retell_connected || false);
+          setIsConnected(!!integration.retell_connected);
           setFormData({
             retell_agent_id: integration.retell_agent_id || '',
             retell_phone_number: integration.retell_phone_number || '',
           });
+        } else {
+          setIsConnected(false);
         }
       } catch (err: any) {
         console.error('Error fetching data:', err);
-        setError('Failed to load integration data');
-      } finally {
-        setLoading(false);
+        setError(err?.message || 'Failed to load integration');
       }
     };
 
     fetchData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clientId]);
 
   const handleChange = (field: string, value: string) => {
@@ -91,265 +88,191 @@ export default function ConnectRetell() {
     setSuccess(false);
 
     try {
+      if (apiKeyMissing) {
+        setError('Retell master API key is missing in platform_settings (retell_api_key). Add it first.');
+        setSaving(false);
+        return;
+      }
+
+      // IMPORTANT: Upsert so we never silently update 0 rows
       const { error } = await supabase
         .from('integrations')
-        .update({
-          retell_agent_id: formData.retell_agent_id,
-          retell_phone_number: formData.retell_phone_number,
-          retell_connected: true,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('client_id', clientId);
+        .upsert(
+          {
+            client_id: clientId,
+            retell_agent_id: formData.retell_agent_id,
+            retell_phone_number: formData.retell_phone_number,
+            retell_connected: true,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'client_id' }
+        );
 
       if (error) throw error;
 
       setSuccess(true);
       setIsConnected(true);
-      
+
       setTimeout(() => {
-  window.location.href = `/techops/clients/${clientId}`;
-}, 1500);
+        window.location.href = `/techops/clients/${clientId}`;
+      }, 900);
     } catch (err: any) {
       console.error('Error updating integration:', err);
-      setError(err.message || 'Failed to connect Retell AI');
+      setError(err?.message || 'Failed to connect Retell AI');
+    } finally {
       setSaving(false);
     }
   };
 
   const handleDisconnect = async () => {
-    if (!confirm('Are you sure you want to disconnect Retell AI? This will stop all AI phone functionality for this client.')) {
-      return;
-    }
+    if (!confirm('Disconnect Retell AI for this client?')) return;
 
     setSaving(true);
     setError('');
+    setSuccess(false);
 
     try {
+      // Upsert false (works even if row didn’t exist)
       const { error } = await supabase
         .from('integrations')
-        .update({
-          retell_agent_id: null,
-          retell_phone_number: null,
-          retell_connected: false,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('client_id', clientId);
+        .upsert(
+          {
+            client_id: clientId,
+            retell_agent_id: null,
+            retell_phone_number: null,
+            retell_connected: false,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'client_id' }
+        );
 
       if (error) throw error;
 
-      setFormData({
-        retell_agent_id: '',
-        retell_phone_number: '',
-      });
+      setFormData({ retell_agent_id: '', retell_phone_number: '' });
       setIsConnected(false);
-      setSaving(false);
+      setSuccess(true);
+
+      setTimeout(() => {
+        window.location.href = `/techops/clients/${clientId}`;
+      }, 900);
     } catch (err: any) {
-      console.error('Error disconnecting:', err);
-      setError(err.message || 'Failed to disconnect Retell AI');
+      console.error(err);
+      setError(err?.message || 'Failed to disconnect');
+    } finally {
       setSaving(false);
     }
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center">
-        <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
-      </div>
-    );
-  }
-
-  if (apiKeyMissing) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
-        <div className="border-b border-slate-700 bg-slate-800/50 backdrop-blur">
-          <div className="container mx-auto px-6 py-4">
-            <Link 
-              href={`/techops/clients/${clientId}`}
-              className="inline-flex items-center text-slate-400 hover:text-white transition-colors"
-            >
-              <ArrowLeft className="w-4 h-4 mr-2" />
-              Back to Client Details
-            </Link>
-          </div>
-        </div>
-
-        <div className="container mx-auto px-6 py-8 max-w-3xl">
-          <Card className="border-red-700 bg-red-500/10 backdrop-blur">
-            <CardHeader>
-              <CardTitle className="text-red-500 flex items-center gap-2">
-                <AlertTriangle className="w-6 h-6" />
-                API Key Required
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <p className="text-slate-300">
-                Before you can connect clients to Retell AI, you need to configure your master Retell API key.
-              </p>
-              <p className="text-slate-400 text-sm">
-                This API key allows the platform to fetch real-time call data for all your clients.
-              </p>
-              <Link href="/techops/settings">
-                <Button className="bg-blue-600 hover:bg-blue-700">
-                  Go to Settings
-                </Button>
-              </Link>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
-      {/* Header */}
-      <div className="border-b border-slate-700 bg-slate-800/50 backdrop-blur">
+    <div className="min-h-screen bg-[#0A0A0A]">
+      <div className="border-b border-white/5 bg-black/40 backdrop-blur-xl">
         <div className="container mx-auto px-6 py-4">
-          <Link 
-            href={`/techops/clients/${clientId}`}
-            className="inline-flex items-center text-slate-400 hover:text-white transition-colors"
-          >
+          <Link href={`/techops/clients/${clientId}`} className="inline-flex items-center text-gray-400 hover:text-white">
             <ArrowLeft className="w-4 h-4 mr-2" />
             Back to Client Details
           </Link>
         </div>
       </div>
 
-      <div className="container mx-auto px-6 py-8 max-w-3xl">
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-white mb-2 flex items-center gap-3">
-            <PhoneCall className="w-8 h-8 text-blue-500" />
-            Retell AI Integration
-          </h1>
-          <p className="text-slate-400">Configure Retell AI for {clientName}</p>
-        </div>
-
-        {success && (
-          <div className="mb-6 p-4 bg-green-500/10 border border-green-500/20 rounded flex items-start gap-3">
-            <CheckCircle className="w-5 h-5 text-green-500 mt-0.5" />
-            <div>
-              <p className="text-green-500 font-medium">Success!</p>
-              <p className="text-green-400 text-sm">Retell AI has been connected. Redirecting...</p>
-            </div>
-          </div>
+      <div className="container mx-auto px-6 py-8 max-w-3xl space-y-6">
+        {apiKeyMissing && (
+          <Card className="border-red-500/20 bg-red-500/10">
+            <CardHeader>
+              <CardTitle className="text-red-400 flex items-center gap-2">
+                <AlertTriangle className="w-5 h-5" />
+                Retell Master API Key Missing
+              </CardTitle>
+              <CardDescription className="text-red-300/80">
+                Add platform_settings.retell_api_key first, then connect agents.
+              </CardDescription>
+            </CardHeader>
+          </Card>
         )}
 
-        <Card className="border-slate-700 bg-slate-800/50 backdrop-blur">
+        <Card className="border-white/5 bg-white/[0.02]">
           <CardHeader>
-            <CardTitle className="text-white">Connection Details</CardTitle>
-            <CardDescription className="text-slate-400">
-              Assign a Retell AI agent to this client. The platform will automatically fetch real-time call data using your master API key.
+            <CardTitle className="text-white flex items-center gap-2">
+              <PhoneCall className="w-5 h-5 text-emerald-400" />
+              Retell AI • {clientName || 'Client'}
+            </CardTitle>
+            <CardDescription className="text-gray-500">
+              {isConnected ? 'Connected — update details or disconnect.' : 'Connect the client’s Retell agent.'}
             </CardDescription>
           </CardHeader>
-          <CardContent>
-            {error && (
-              <div className="mb-6 p-4 bg-red-500/10 border border-red-500/20 rounded flex items-start gap-3">
-                <AlertCircle className="w-5 h-5 text-red-500 mt-0.5" />
+
+          <CardContent className="space-y-4">
+            {success && (
+              <div className="flex items-start gap-3 p-3 border border-emerald-500/20 rounded-lg bg-emerald-500/10">
+                <CheckCircle className="w-5 h-5 text-emerald-400 mt-0.5" />
                 <div>
-                  <p className="text-red-500 font-medium">Error</p>
-                  <p className="text-red-400 text-sm">{error}</p>
+                  <p className="text-emerald-300 font-medium">Saved</p>
+                  <p className="text-emerald-200/80 text-sm">Redirecting…</p>
                 </div>
               </div>
             )}
 
-            <form onSubmit={handleSubmit} className="space-y-6">
-              {/* Agent ID */}
+            {error && (
+              <div className="flex items-start gap-3 p-3 border border-red-500/20 rounded-lg bg-red-500/10">
+                <AlertCircle className="w-5 h-5 text-red-400 mt-0.5" />
+                <div>
+                  <p className="text-red-300 font-medium">Error</p>
+                  <p className="text-red-200/80 text-sm">{error}</p>
+                </div>
+              </div>
+            )}
+
+            <form onSubmit={handleSubmit} className="space-y-5">
               <div className="space-y-2">
-                <Label htmlFor="retell_agent_id" className="text-white">
-                  Retell Agent ID *
-                </Label>
+                <Label htmlFor="retell_agent_id" className="text-white">Retell Agent ID *</Label>
                 <Input
                   id="retell_agent_id"
                   value={formData.retell_agent_id}
                   onChange={(e) => handleChange('retell_agent_id', e.target.value)}
                   placeholder="agent_xxxxxxxxxxxxx"
-                  className="bg-slate-700 border-slate-600 text-white placeholder:text-slate-500 font-mono"
+                  className="bg-white/5 border-white/10 text-white placeholder:text-gray-500"
                   required
                 />
-                <p className="text-xs text-slate-500">
-                  The unique identifier for this client's AI agent in Retell
-                </p>
               </div>
 
-              {/* Phone Number */}
               <div className="space-y-2">
-                <Label htmlFor="retell_phone_number" className="text-white">
-                  Retell Phone Number *
-                </Label>
+                <Label htmlFor="retell_phone_number" className="text-white">Retell Phone Number *</Label>
                 <Input
                   id="retell_phone_number"
-                  type="tel"
                   value={formData.retell_phone_number}
                   onChange={(e) => handleChange('retell_phone_number', e.target.value)}
-                  placeholder="+1 (555) 123-4567"
-                  className="bg-slate-700 border-slate-600 text-white placeholder:text-slate-500"
+                  placeholder="+1416xxxxxxx"
+                  className="bg-white/5 border-white/10 text-white placeholder:text-gray-500"
                   required
                 />
-                <p className="text-xs text-slate-500">
-                  The phone number assigned to this client's AI agent
-                </p>
               </div>
 
-              {/* Info Box */}
-              <div className="bg-blue-500/10 border border-blue-500/20 rounded p-4">
-                <h4 className="text-white font-medium mb-2 flex items-center gap-2">
-                  <PhoneCall className="w-4 h-4 text-blue-500" />
-                  How to get these credentials:
-                </h4>
-                <ol className="text-slate-300 text-sm space-y-1 list-decimal list-inside">
-                  <li>Log in to your Retell AI dashboard</li>
-                  <li>Navigate to the Agents section</li>
-                  <li>Create or select an agent for "{clientName}"</li>
-                  <li>Copy the Agent ID from the agent details</li>
-                  <li>Assign a phone number to the agent</li>
-                  <li>Paste both values above</li>
-                </ol>
-                <p className="text-xs text-slate-500 mt-3">
-                  💡 The platform will use your master API key (saved in Settings) to automatically fetch call data for this agent.
-                </p>
-              </div>
-
-              {/* Actions */}
-              <div className="flex gap-4 pt-4">
-                {isConnected && (
-                  <Button 
+              <div className="flex items-center justify-between gap-3">
+                {isConnected ? (
+                  <Button
                     type="button"
                     onClick={handleDisconnect}
-                    disabled={saving}
                     variant="outline"
-                    className="border-red-600 text-red-500 hover:bg-red-500/10 hover:text-red-400"
+                    className="border-red-500/30 bg-red-500/10 text-red-300 hover:bg-red-500/20"
+                    disabled={saving}
                   >
-                    {saving ? (
-                      <>
-                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                        Disconnecting...
-                      </>
-                    ) : (
-                      'Disconnect Retell AI'
-                    )}
+                    Disconnect
                   </Button>
+                ) : (
+                  <div />
                 )}
-                <Link href={`/techops/clients/${clientId}`} className="flex-1">
-                  <Button 
-                    type="button"
-                    variant="outline" 
-                    className="w-full border-slate-600 text-slate-300 hover:text-white hover:bg-slate-700"
-                  >
-                    Cancel
-                  </Button>
-                </Link>
-                <Button 
-                  type="submit" 
-                  disabled={saving}
-                  className="flex-1 bg-blue-600 hover:bg-blue-700"
+
+                <Button
+                  type="submit"
+                  className="bg-emerald-500 hover:bg-emerald-600 text-white"
+                  disabled={saving || apiKeyMissing}
                 >
                   {saving ? (
                     <>
                       <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      Connecting...
+                      Saving...
                     </>
                   ) : (
-                    isConnected ? 'Update Connection' : 'Connect Retell AI'
+                    isConnected ? 'Save Changes' : 'Connect Retell AI'
                   )}
                 </Button>
               </div>

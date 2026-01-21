@@ -7,23 +7,23 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { ArrowLeft, Calendar, AlertCircle, Loader2, CheckCircle, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, Calendar, AlertCircle, Loader2, CheckCircle } from 'lucide-react';
 import Link from 'next/link';
 
 export default function ConnectCalendar() {
   const router = useRouter();
   const params = useParams();
   const clientId = Array.isArray(params.id) ? params.id[0] : params.id;
+
   const supabase = createClient();
-  
-  const [loading, setLoading] = useState(true);
+
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
-  
+
   const [clientName, setClientName] = useState('');
   const [isConnected, setIsConnected] = useState(false);
-  
+
   const [formData, setFormData] = useState({
     google_calendar_id: '',
     google_calendar_email: '',
@@ -32,40 +32,37 @@ export default function ConnectCalendar() {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        // Fetch client info
         const { data: client } = await supabase
           .from('clients')
           .select('business_name')
           .eq('id', clientId)
           .single();
 
-        if (client) {
-          setClientName(client.business_name);
-        }
+        if (client) setClientName(client.business_name);
 
-        // Fetch existing integration
         const { data: integration } = await supabase
           .from('integrations')
           .select('*')
           .eq('client_id', clientId)
-          .single();
+          .maybeSingle();
 
         if (integration) {
-          setIsConnected(integration.google_calendar_connected || false);
+          setIsConnected(!!integration.google_calendar_connected);
           setFormData({
             google_calendar_id: integration.google_calendar_id || '',
             google_calendar_email: integration.google_calendar_email || '',
           });
+        } else {
+          setIsConnected(false);
         }
       } catch (err: any) {
-        console.error('Error fetching data:', err);
-        setError('Failed to load integration data');
-      } finally {
-        setLoading(false);
+        console.error(err);
+        setError(err?.message || 'Failed to load integration');
       }
     };
 
     fetchData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clientId]);
 
   const handleChange = (field: string, value: string) => {
@@ -81,226 +78,168 @@ export default function ConnectCalendar() {
     try {
       const { error } = await supabase
         .from('integrations')
-        .update({
-          google_calendar_id: formData.google_calendar_id,
-          google_calendar_email: formData.google_calendar_email,
-          google_calendar_connected: true,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('client_id', clientId);
+        .upsert(
+          {
+            client_id: clientId,
+            google_calendar_id: formData.google_calendar_id,
+            google_calendar_email: formData.google_calendar_email,
+            google_calendar_connected: true,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'client_id' }
+        );
 
       if (error) throw error;
 
       setSuccess(true);
       setIsConnected(true);
-      
+
       setTimeout(() => {
         window.location.href = `/techops/clients/${clientId}`;
-      }, 1500);
+      }, 900);
     } catch (err: any) {
-      console.error('Error updating integration:', err);
-      setError(err.message || 'Failed to connect Google Calendar');
+      console.error(err);
+      setError(err?.message || 'Failed to connect calendar');
+    } finally {
       setSaving(false);
     }
   };
 
   const handleDisconnect = async () => {
-    if (!confirm('Are you sure you want to disconnect Google Calendar? This will stop all calendar sync functionality for this client.')) {
-      return;
-    }
+    if (!confirm('Disconnect Google Calendar for this client?')) return;
 
     setSaving(true);
     setError('');
+    setSuccess(false);
 
     try {
       const { error } = await supabase
         .from('integrations')
-        .update({
-          google_calendar_id: null,
-          google_calendar_email: null,
-          google_calendar_connected: false,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('client_id', clientId);
+        .upsert(
+          {
+            client_id: clientId,
+            google_calendar_id: null,
+            google_calendar_email: null,
+            google_calendar_connected: false,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'client_id' }
+        );
 
       if (error) throw error;
 
-      setFormData({
-        google_calendar_id: '',
-        google_calendar_email: '',
-      });
+      setFormData({ google_calendar_id: '', google_calendar_email: '' });
       setIsConnected(false);
-      setSaving(false);
+      setSuccess(true);
+
+      setTimeout(() => {
+        window.location.href = `/techops/clients/${clientId}`;
+      }, 900);
     } catch (err: any) {
-      console.error('Error disconnecting:', err);
-      setError(err.message || 'Failed to disconnect Google Calendar');
+      console.error(err);
+      setError(err?.message || 'Failed to disconnect');
+    } finally {
       setSaving(false);
     }
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-950 via-blue-950 to-slate-950 flex items-center justify-center">
-        <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
-      </div>
-    );
-  }
-
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-blue-950 to-slate-950">
-      {/* Animated Background */}
-      <div className="fixed inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-blue-600/10 via-transparent to-transparent pointer-events-none" />
-      
-      {/* Header */}
-      <div className="border-b border-slate-700/50 bg-slate-900/50 backdrop-blur-xl relative">
+    <div className="min-h-screen bg-[#0A0A0A]">
+      <div className="border-b border-white/5 bg-black/40 backdrop-blur-xl">
         <div className="container mx-auto px-6 py-4">
-          <Link 
-            href={`/techops/clients/${clientId}`}
-            className="inline-flex items-center text-slate-400 hover:text-white transition-colors"
-          >
+          <Link href={`/techops/clients/${clientId}`} className="inline-flex items-center text-gray-400 hover:text-white">
             <ArrowLeft className="w-4 h-4 mr-2" />
             Back to Client Details
           </Link>
         </div>
       </div>
 
-      <div className="container mx-auto px-6 py-8 max-w-3xl relative">
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-white mb-2 flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-blue-500/10">
-              <Calendar className="w-8 h-8 text-blue-500" />
-            </div>
-            Google Calendar Integration
-          </h1>
-          <p className="text-slate-400">Configure Google Calendar for {clientName}</p>
-        </div>
-
-        {success && (
-          <div className="mb-6 p-4 bg-green-500/10 border border-green-500/20 rounded-lg flex items-start gap-3 backdrop-blur">
-            <CheckCircle className="w-5 h-5 text-green-500 mt-0.5" />
-            <div>
-              <p className="text-green-500 font-medium">Success!</p>
-              <p className="text-green-400 text-sm">Google Calendar has been connected. Redirecting...</p>
-            </div>
-          </div>
-        )}
-
-        <Card className="border-slate-700/50 bg-slate-900/50 backdrop-blur-xl shadow-xl">
+      <div className="container mx-auto px-6 py-8 max-w-3xl">
+        <Card className="border-white/5 bg-white/[0.02]">
           <CardHeader>
-            <CardTitle className="text-white">Connection Details</CardTitle>
-            <CardDescription className="text-slate-400">
-              Connect this client's Google Calendar to enable automated appointment scheduling and calendar sync.
+            <CardTitle className="text-white flex items-center gap-2">
+              <Calendar className="w-5 h-5 text-emerald-400" />
+              Google Calendar • {clientName || 'Client'}
+            </CardTitle>
+            <CardDescription className="text-gray-500">
+              {isConnected ? 'Connected — update details or disconnect.' : 'Connect calendar metadata for this client.'}
             </CardDescription>
           </CardHeader>
-          <CardContent>
-            {error && (
-              <div className="mb-6 p-4 bg-red-500/10 border border-red-500/20 rounded-lg flex items-start gap-3">
-                <AlertCircle className="w-5 h-5 text-red-500 mt-0.5" />
+
+          <CardContent className="space-y-4">
+            {success && (
+              <div className="flex items-start gap-3 p-3 border border-emerald-500/20 rounded-lg bg-emerald-500/10">
+                <CheckCircle className="w-5 h-5 text-emerald-400 mt-0.5" />
                 <div>
-                  <p className="text-red-500 font-medium">Error</p>
-                  <p className="text-red-400 text-sm">{error}</p>
+                  <p className="text-emerald-300 font-medium">Saved</p>
+                  <p className="text-emerald-200/80 text-sm">Redirecting…</p>
                 </div>
               </div>
             )}
 
-            <form onSubmit={handleSubmit} className="space-y-6">
-              {/* Calendar Email */}
+            {error && (
+              <div className="flex items-start gap-3 p-3 border border-red-500/20 rounded-lg bg-red-500/10">
+                <AlertCircle className="w-5 h-5 text-red-400 mt-0.5" />
+                <div>
+                  <p className="text-red-300 font-medium">Error</p>
+                  <p className="text-red-200/80 text-sm">{error}</p>
+                </div>
+              </div>
+            )}
+
+            <form onSubmit={handleSubmit} className="space-y-5">
               <div className="space-y-2">
-                <Label htmlFor="google_calendar_email" className="text-white">
-                  Google Calendar Email *
-                </Label>
+                <Label htmlFor="google_calendar_id" className="text-white">Google Calendar ID *</Label>
+                <Input
+                  id="google_calendar_id"
+                  value={formData.google_calendar_id}
+                  onChange={(e) => handleChange('google_calendar_id', e.target.value)}
+                  placeholder="primary or calendarId@group.calendar.google.com"
+                  className="bg-white/5 border-white/10 text-white placeholder:text-gray-500"
+                  required
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="google_calendar_email" className="text-white">Google Calendar Email *</Label>
                 <Input
                   id="google_calendar_email"
                   type="email"
                   value={formData.google_calendar_email}
                   onChange={(e) => handleChange('google_calendar_email', e.target.value)}
-                  placeholder="calendar@example.com"
-                  className="bg-slate-800/50 border-slate-700/50 text-white placeholder:text-slate-500 focus:border-blue-500/50"
+                  placeholder="calendar@email.com"
+                  className="bg-white/5 border-white/10 text-white placeholder:text-gray-500"
                   required
                 />
-                <p className="text-xs text-slate-500">
-                  The Google account email that owns the calendar
-                </p>
               </div>
 
-              {/* Calendar ID */}
-              <div className="space-y-2">
-                <Label htmlFor="google_calendar_id" className="text-white">
-                  Google Calendar ID *
-                </Label>
-                <Input
-                  id="google_calendar_id"
-                  value={formData.google_calendar_id}
-                  onChange={(e) => handleChange('google_calendar_id', e.target.value)}
-                  placeholder="calendar-id@group.calendar.google.com"
-                  className="bg-slate-800/50 border-slate-700/50 text-white placeholder:text-slate-500 font-mono focus:border-blue-500/50"
-                  required
-                />
-                <p className="text-xs text-slate-500">
-                  The unique identifier for this calendar in Google Calendar
-                </p>
-              </div>
-
-              {/* Info Box */}
-              <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-4">
-                <h4 className="text-white font-medium mb-2 flex items-center gap-2">
-                  <Calendar className="w-4 h-4 text-blue-500" />
-                  How to get the Calendar ID:
-                </h4>
-                <ol className="text-slate-300 text-sm space-y-1 list-decimal list-inside">
-                  <li>Open Google Calendar on desktop</li>
-                  <li>Click on the calendar name in the left sidebar</li>
-                  <li>Go to "Settings and sharing"</li>
-                  <li>Scroll down to "Integrate calendar"</li>
-                  <li>Copy the "Calendar ID" (looks like an email)</li>
-                  <li>Paste it above</li>
-                </ol>
-                <p className="text-xs text-slate-500 mt-3">
-                  💡 The client must grant MG&CO access to their calendar for this to work.
-                </p>
-              </div>
-
-              {/* Actions */}
-              <div className="flex gap-4 pt-4">
-                {isConnected && (
-                  <Button 
+              <div className="flex items-center justify-between gap-3">
+                {isConnected ? (
+                  <Button
                     type="button"
                     onClick={handleDisconnect}
-                    disabled={saving}
                     variant="outline"
-                    className="border-red-600/50 bg-red-500/5 text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-all duration-300"
+                    className="border-red-500/30 bg-red-500/10 text-red-300 hover:bg-red-500/20"
+                    disabled={saving}
                   >
-                    {saving ? (
-                      <>
-                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                        Disconnecting...
-                      </>
-                    ) : (
-                      'Disconnect Calendar'
-                    )}
+                    Disconnect
                   </Button>
+                ) : (
+                  <div />
                 )}
-                <Link href={`/techops/clients/${clientId}`} className="flex-1">
-                  <Button 
-                    type="button"
-                    variant="outline" 
-                    className="w-full border-slate-600/50 bg-slate-800/50 text-slate-200 hover:text-white hover:bg-slate-700/70 transition-all duration-300"
-                  >
-                    Cancel
-                  </Button>
-                </Link>
-                <Button 
-                  type="submit" 
+
+                <Button
+                  type="submit"
+                  className="bg-emerald-500 hover:bg-emerald-600 text-white"
                   disabled={saving}
-                  className="flex-1 bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 shadow-lg shadow-blue-500/20 transition-all duration-300"
                 >
                   {saving ? (
                     <>
                       <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      Connecting...
+                      Saving...
                     </>
                   ) : (
-                    isConnected ? 'Update Connection' : 'Connect Calendar'
+                    isConnected ? 'Save Changes' : 'Connect Calendar'
                   )}
                 </Button>
               </div>

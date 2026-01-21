@@ -1,44 +1,43 @@
-import { createClient } from '@/lib/supabase/server';
-import { NextResponse } from 'next/server';
+import { NextResponse } from 'next/server'
+import { createClient } from '@/lib/supabase/server'
 
-export async function GET(request: Request) {
-  const { searchParams, origin } = new URL(request.url);
-  const code = searchParams.get('code');
-  const role = searchParams.get('role');
-  const next = searchParams.get('next') ?? '/';
+export async function GET(req: Request) {
+  const url = new URL(req.url)
 
-  if (code) {
-    const supabase = await createClient();
-    
-    const { error, data } = await supabase.auth.exchangeCodeForSession(code);
+  const code = url.searchParams.get('code')
+  const role = (url.searchParams.get('role') || '').toUpperCase()
+  const next = url.searchParams.get('next') || ''
 
-    if (!error && data.user) {
-      // Check if user exists in users table
-      const { data: existingUser } = await supabase
-        .from('users')
-        .select('*')
-        .eq('id', data.user.id)
-        .single();
+  const techopsRedirect = next || '/techops/dashboard'
+  const clientRedirect = next || '/client/dashboard'
 
-      if (!existingUser) {
-        // Create new user with specified role
-        await supabase.from('users').insert({
-          id: data.user.id,
-          email: data.user.email,
-          role: role || 'CLIENT',
-          full_name: data.user.user_metadata.full_name,
-        });
-      }
+  try {
+    const supabase = await createClient()
 
-      // Redirect based on role
-      if (role === 'TECHOPS') {
-        return NextResponse.redirect(`${origin}/techops/dashboard`);
-      } else {
-        return NextResponse.redirect(`${origin}/client/dashboard`);
+    if (code) {
+      const { error } = await supabase.auth.exchangeCodeForSession(code)
+      if (error) {
+        const dest =
+          role === 'TECHOPS'
+            ? `/techops/login?error=${encodeURIComponent(error.message)}`
+            : `/client/login?error=${encodeURIComponent(error.message)}`
+        return NextResponse.redirect(new URL(dest, url.origin))
       }
     }
-  }
 
-  // If there was an error or no code, redirect to login
-  return NextResponse.redirect(`${origin}/login`);
+    const { data } = await supabase.auth.getSession()
+    if (!data?.session) {
+      const dest = role === 'TECHOPS' ? '/techops/login' : '/client/login'
+      return NextResponse.redirect(new URL(dest, url.origin))
+    }
+
+    if (role === 'TECHOPS') return NextResponse.redirect(new URL(techopsRedirect, url.origin))
+    if (role === 'CLIENT') return NextResponse.redirect(new URL(clientRedirect, url.origin))
+
+    // If role missing, send somewhere safe
+    return NextResponse.redirect(new URL('/', url.origin))
+  } catch (e: any) {
+    const msg = encodeURIComponent(e?.message || 'Auth callback failed')
+    return NextResponse.redirect(new URL(`/techops/login?error=${msg}`, url.origin))
+  }
 }
