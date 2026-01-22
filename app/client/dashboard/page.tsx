@@ -1,531 +1,620 @@
-'use client'
+"use client";
 
-import { useEffect, useMemo, useState } from 'react'
-import { useRouter } from 'next/navigation'
-import { createClient } from '@/lib/supabase/client'
+import React, { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
 
 type ClientRow = {
-  id: string
-  business_name: string | null
-  owner_email: string | null
-  industry: string | null
-  phone: string | null
-  address: string | null
-  city: string | null
-  province: string | null
-  postal_code: string | null
-}
+  id: string;
+  business_name: string;
+  owner_email: string;
+  industry: string | null;
+  phone_number: string | null;
+  address: string | null;
+  city: string | null;
+  state: string | null;
+  zip_code: string | null;
+  status: string | null;
+};
 
-type IntegrationsRow = {
-  client_id: string
-  google_calendar_connected?: boolean | null
-  retell_connected?: boolean | null
-  google_calendar_id?: string | null
-  retell_agent_id?: string | null
-}
+type IntegrationRow = {
+  retell_connected: boolean;
+  retell_phone_number: string | null;
+  google_calendar_connected: boolean;
+  google_calendar_id: string | null;
+};
 
 type GoogleEvent = {
-  id?: string
-  summary?: string
-  start?: { dateTime?: string; date?: string }
-  end?: { dateTime?: string; date?: string }
+  id: string;
+  summary: string;
+  start: { dateTime?: string; date?: string };
+  end: { dateTime?: string; date?: string };
+  htmlLink?: string;
+};
+
+type RetellAnalytics = {
+  totalCalls?: number;
+  answered?: number;
+  missed?: number;
+  avgDurationSec?: number;
+  lastSyncAt?: string;
+};
+
+function iso(d: Date) {
+  return d.toISOString();
 }
 
-type RetellPayload = {
-  range: string
-  summary: {
-    totalCalls: number
-    totalEnded: number
-    avgDurationSec: number
-    successRate: number
-    sentiment: Record<string, number>
-    disconnection: Record<string, number>
-  }
-  series: { date: string; calls: number; minutes: number }[]
-  recentCalls: Array<{
-    call_id: string
-    call_status?: string
-    start_timestamp?: number
-    duration_ms?: number
-    sentiment?: string
-    successful?: boolean | null
-    disconnection_reason?: string
-  }>
+function startOfMonth(d: Date) {
+  return new Date(d.getFullYear(), d.getMonth(), 1);
 }
-
-function formatSec(sec: number) {
-  if (!sec) return '0s'
-  const m = Math.floor(sec / 60)
-  const s = sec % 60
-  if (!m) return `${s}s`
-  return `${m}m ${s}s`
+function endOfMonth(d: Date) {
+  return new Date(d.getFullYear(), d.getMonth() + 1, 1);
+}
+function addMonths(d: Date, n: number) {
+  return new Date(d.getFullYear(), d.getMonth() + n, 1);
+}
+function sameDay(a: Date, b: Date) {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
 }
 
 export default function ClientDashboardPage() {
-  const router = useRouter()
-  const supabase = useMemo(() => createClient(), [])
+  const router = useRouter();
+  const supabase = useMemo(() => createClient(), []);
 
-  const [loading, setLoading] = useState(true)
-  const [userEmail, setUserEmail] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true);
+  const [meEmail, setMeEmail] = useState<string>("");
 
-  const [client, setClient] = useState<ClientRow | null>(null)
-  const [integrations, setIntegrations] = useState<IntegrationsRow | null>(null)
+  const [client, setClient] = useState<ClientRow | null>(null);
+  const [integration, setIntegration] = useState<IntegrationRow | null>(null);
 
-  // Calendar state
-  const [calendarLoading, setCalendarLoading] = useState(false)
-  const [calendarError, setCalendarError] = useState<string | null>(null)
-  const [events, setEvents] = useState<GoogleEvent[]>([])
-  const [weekStart, setWeekStart] = useState(() => {
-    const d = new Date()
-    const ws = new Date(d)
-    ws.setDate(d.getDate() - d.getDay())
-    ws.setHours(0, 0, 0, 0)
-    return ws
-  })
+  const [month, setMonth] = useState<Date>(() => startOfMonth(new Date()));
+  const [events, setEvents] = useState<GoogleEvent[]>([]);
+  const [eventsLoading, setEventsLoading] = useState(false);
 
-  // Retell state
-  const [retellLoading, setRetellLoading] = useState(false)
-  const [retellError, setRetellError] = useState<string | null>(null)
-  const [retellRange, setRetellRange] = useState<'7d' | '30d' | '90d' | '365d' | 'all'>('all')
-  const [retell, setRetell] = useState<RetellPayload | null>(null)
+  const [retell, setRetell] = useState<RetellAnalytics | null>(null);
+  const [retellLoading, setRetellLoading] = useState(false);
 
-  const weekDays = useMemo(() => {
-    return Array.from({ length: 7 }).map((_, i) => {
-      const d = new Date(weekStart)
-      d.setDate(weekStart.getDate() + i)
-      return d
-    })
-  }, [weekStart])
+  const [selectedDay, setSelectedDay] = useState<Date | null>(null);
 
-  const hours = useMemo(() => Array.from({ length: 12 }).map((_, i) => i + 8), [])
+  const monthLabel = useMemo(() => {
+    const fmt = new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric" });
+    return fmt.format(month);
+  }, [month]);
 
-  function eventStart(e: GoogleEvent) {
-    const dt = e.start?.dateTime || e.start?.date
-    return dt ? new Date(dt) : null
-  }
+  const monthDays = useMemo(() => {
+    const start = startOfMonth(month);
+    const end = endOfMonth(month);
+    const days: Date[] = [];
 
-  function eventInCell(e: GoogleEvent, day: Date, hour: number) {
-    const st = eventStart(e)
-    if (!st) return false
-    return (
-      st.getFullYear() === day.getFullYear() &&
-      st.getMonth() === day.getMonth() &&
-      st.getDate() === day.getDate() &&
-      st.getHours() === hour
-    )
-  }
+    // build grid starting Sunday
+    const gridStart = new Date(start);
+    gridStart.setDate(start.getDate() - start.getDay());
 
-  async function loadClientAndIntegrations(email: string) {
-    // 1) load client by owner_email
-    const { data: c, error: cErr } = await supabase
-      .from('clients')
-      .select('id,business_name,owner_email,industry,phone,address,city,province,postal_code')
-      .eq('owner_email', email)
-      .maybeSingle()
+    // 6 weeks grid
+    for (let i = 0; i < 42; i++) {
+      const d = new Date(gridStart);
+      d.setDate(gridStart.getDate() + i);
+      if (d < endOfMonth(addMonths(month, -1)) || d > endOfMonth(addMonths(month, 2))) {
+        // safety guard (doesn't really happen)
+      }
+      days.push(d);
+    }
+    return days;
+  }, [month]);
 
-    if (cErr || !c) {
-      // If no client row exists for this email, you can decide what to do:
-      // - show message
-      // - auto-create client row (later)
-      setClient(null)
-      setIntegrations(null)
-      return
+  const eventsByDay = useMemo(() => {
+    const map = new Map<string, GoogleEvent[]>();
+    for (const e of events) {
+      const dt = e.start.dateTime || e.start.date;
+      if (!dt) continue;
+      const d = new Date(dt);
+      const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+      const arr = map.get(key) || [];
+      arr.push(e);
+      map.set(key, arr);
+    }
+    return map;
+  }, [events]);
+
+  const dayKey = (d: Date) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+
+  async function loadMeAndClient() {
+    setLoading(true);
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    const email = user?.email || "";
+    setMeEmail(email);
+
+    if (!email) {
+      router.replace("/client/login");
+      return;
     }
 
-    setClient(c as ClientRow)
+    // Find client by owner_email
+    const { data: clientRow, error: cErr } = await supabase
+      .from("clients")
+      .select("id,business_name,owner_email,industry,phone_number,address,city,state,zip_code,status")
+      .eq("owner_email", email)
+      .maybeSingle();
 
-    // 2) integrations row
-    const { data: i, error: iErr } = await supabase
-      .from('integrations')
-      .select('client_id,google_calendar_connected,retell_connected,google_calendar_id,retell_agent_id')
-      .eq('client_id', (c as any).id)
-      .maybeSingle()
+    if (cErr) {
+      console.error(cErr);
+      setClient(null);
+      setIntegration(null);
+      setLoading(false);
+      return;
+    }
 
-    if (!iErr && i) setIntegrations(i as IntegrationsRow)
-    else setIntegrations(null)
+    if (!clientRow) {
+      setClient(null);
+      setIntegration(null);
+      setLoading(false);
+      return;
+    }
+
+    setClient(clientRow as any);
+
+    const { data: intRow, error: iErr } = await supabase
+      .from("integrations")
+      .select("retell_connected,retell_phone_number,google_calendar_connected,google_calendar_id")
+      .eq("client_id", clientRow.id)
+      .maybeSingle();
+
+    if (iErr) console.error(iErr);
+    setIntegration((intRow as any) || null);
+
+    setLoading(false);
+
+    // Load external panels
+    await Promise.all([refreshCalendar(clientRow.id, month), refreshRetell(clientRow.id)]);
   }
 
-  async function refreshCalendar() {
-    if (!client?.id) return
-    setCalendarLoading(true)
-    setCalendarError(null)
-
+  async function refreshCalendar(clientId: string, monthDate: Date) {
+    setEventsLoading(true);
     try {
-      const start = new Date(weekStart)
-      const end = new Date(weekStart)
-      end.setDate(end.getDate() + 7)
+      const start = iso(startOfMonth(monthDate));
+      const end = iso(endOfMonth(monthDate));
 
       const res = await fetch(
-        `/api/calendar/events?clientId=${client.id}&start=${encodeURIComponent(start.toISOString())}&end=${encodeURIComponent(end.toISOString())}`,
-        { cache: 'no-store' }
-      )
-      const json = await res.json()
-      if (!res.ok) throw new Error(json?.error || 'Calendar fetch failed')
-      setEvents(json.events || [])
-    } catch (e: any) {
-      setCalendarError(e?.message || 'Calendar fetch failed')
-      setEvents([])
-    } finally {
-      setCalendarLoading(false)
-    }
-  }
+        `/api/calendar/events?clientId=${encodeURIComponent(clientId)}&start=${encodeURIComponent(
+          start
+        )}&end=${encodeURIComponent(end)}`,
+        { cache: "no-store" }
+      );
 
-  async function refreshRetell() {
-    if (!client?.id) return
-    setRetellLoading(true)
-    setRetellError(null)
-
-    try {
-      const res = await fetch(`/api/retell/analytics?clientId=${client.id}&range=${retellRange}`, {
-        cache: 'no-store',
-      })
-      const json = await res.json()
-      if (!res.ok) throw new Error(json?.error || 'Retell fetch failed')
-      setRetell(json)
-    } catch (e: any) {
-      setRetellError(e?.message || 'Retell fetch failed')
-      setRetell(null)
-    } finally {
-      setRetellLoading(false)
-    }
-  }
-
-  const connectCalendar = () => {
-    if (!client?.id) return
-    window.location.href = `/api/auth/google?clientId=${client.id}`
-  }
-
-  useEffect(() => {
-    ;(async () => {
-      // Use cookie session (Google OAuth now working)
-      const { data } = await supabase.auth.getSession()
-      const email = data.session?.user?.email
-
-      if (!email) {
-        router.replace('/client/login')
-        return
+      if (!res.ok) {
+        const t = await res.text();
+        console.error("calendar events error:", t);
+        setEvents([]);
+        return;
       }
 
-      setUserEmail(email)
-      await loadClientAndIntegrations(email)
-      setLoading(false)
-    })()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+      const json = await res.json();
+      setEvents(Array.isArray(json.events) ? json.events : []);
+    } catch (e) {
+      console.error(e);
+      setEvents([]);
+    } finally {
+      setEventsLoading(false);
+    }
+  }
+
+  async function refreshRetell(clientId: string) {
+    setRetellLoading(true);
+    try {
+      const res = await fetch(`/api/retell/analytics?clientId=${encodeURIComponent(clientId)}`, {
+        cache: "no-store",
+      });
+
+      if (!res.ok) {
+        const t = await res.text();
+        console.error("retell analytics error:", t);
+        setRetell(null);
+        return;
+      }
+
+      const json = await res.json();
+      setRetell(json?.analytics || null);
+    } catch (e) {
+      console.error(e);
+      setRetell(null);
+    } finally {
+      setRetellLoading(false);
+    }
+  }
+
+  async function logout() {
+    await supabase.auth.signOut();
+    router.replace("/client/login");
+  }
 
   useEffect(() => {
-    if (!client?.id) return
-    refreshCalendar()
-    refreshRetell()
+    loadMeAndClient();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [client?.id])
+  }, []);
 
+  // When month changes, reload calendar
   useEffect(() => {
-    if (!client?.id) return
-    refreshRetell()
+    if (!client?.id) return;
+    refreshCalendar(client.id, month);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [retellRange])
+  }, [month, client?.id]);
 
   if (loading) {
     return (
       <div className="min-h-screen bg-black text-white flex items-center justify-center">
-        <div className="text-white/70">Loading…</div>
+        <div className="opacity-70">Loading…</div>
       </div>
-    )
+    );
   }
 
-  // If email is logged in but client row missing
-  if (userEmail && !client) {
+  if (!meEmail) {
+    return (
+      <div className="min-h-screen bg-black text-white flex items-center justify-center">
+        <div className="opacity-70">Not logged in.</div>
+      </div>
+    );
+  }
+
+  if (!client) {
     return (
       <div className="min-h-screen bg-black text-white">
-        <div className="max-w-3xl mx-auto px-6 py-10">
-          <div className="text-3xl font-semibold">Client Dashboard</div>
-          <div className="text-white/60 mt-1">{userEmail}</div>
+        <div className="max-w-4xl mx-auto px-6 py-16">
+          <h1 className="text-3xl font-semibold">Client Dashboard</h1>
+          <p className="mt-2 opacity-70">{meEmail}</p>
 
-          <div className="mt-8 rounded-2xl border border-white/10 bg-white/5 p-6">
-            <div className="text-lg font-semibold">No Client Record Found</div>
-            <div className="text-white/60 mt-2">
-              This Google account is logged in, but it doesn’t match any client in your database (clients.owner_email).
-            </div>
-            <div className="text-white/60 mt-2">
-              Fix: In Supabase → <span className="text-white">clients</span> table, make sure{" "}
-              <span className="text-white">owner_email</span> equals this email.
-            </div>
+          <div className="mt-10 rounded-2xl border border-white/10 bg-white/5 p-6">
+            <div className="text-xl font-semibold">No Client Record Found</div>
+            <p className="mt-2 opacity-70">
+              This Google account is logged in, but it doesn’t match any client in your database
+              (clients.owner_email).
+            </p>
             <button
-              className="mt-6 px-4 py-2 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10"
-              onClick={async () => {
-                await supabase.auth.signOut()
-                router.replace('/client/login')
-              }}
+              onClick={logout}
+              className="mt-6 rounded-xl border border-white/15 bg-white/5 px-4 py-2 hover:bg-white/10"
             >
               Logout
             </button>
           </div>
         </div>
       </div>
-    )
+    );
   }
 
+  const addressLine = [client.address, client.city, client.state, client.zip_code]
+    .filter(Boolean)
+    .join(", ");
+
+  const calConnected = !!integration?.google_calendar_connected;
+  const retellConnected = !!integration?.retell_connected;
+
+  const selectedEvents = selectedDay ? eventsByDay.get(dayKey(selectedDay)) || [] : [];
+
   return (
-    <div className="min-h-screen bg-black text-white">
-      <div className="max-w-6xl mx-auto px-6 py-8">
+    <div className="min-h-screen text-white bg-black">
+      {/* Background glow */}
+      <div className="pointer-events-none fixed inset-0">
+        <div className="absolute -top-40 -left-40 h-[520px] w-[520px] rounded-full bg-emerald-500/20 blur-[120px]" />
+        <div className="absolute -top-40 right-0 h-[520px] w-[520px] rounded-full bg-sky-500/20 blur-[120px]" />
+        <div className="absolute bottom-0 left-1/3 h-[520px] w-[520px] rounded-full bg-indigo-500/10 blur-[120px]" />
+      </div>
+
+      <div className="relative max-w-6xl mx-auto px-6 py-10">
+        {/* Header */}
         <div className="flex items-start justify-between gap-6">
           <div>
-            <div className="text-4xl font-semibold">{client?.business_name || 'Client Dashboard'}</div>
-            <div className="text-white/60">{userEmail}</div>
+            <h1 className="text-4xl font-semibold tracking-tight">Client Dashboard</h1>
+            <div className="mt-2 opacity-70">{meEmail}</div>
           </div>
 
           <button
-            className="px-4 py-2 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10"
-            onClick={async () => {
-              await supabase.auth.signOut()
-              router.replace('/client/login')
-            }}
+            onClick={logout}
+            className="rounded-xl border border-white/15 bg-white/5 px-4 py-2 hover:bg-white/10"
           >
             Logout
           </button>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-8">
-          {/* Business Info */}
-          <div className="lg:col-span-1 rounded-2xl border border-white/10 bg-white/5 p-6">
-            <div className="text-lg font-semibold mb-4">Business Info</div>
-            <div className="space-y-3 text-white/80">
-              <div>
-                <div className="text-white/50 text-sm">Industry</div>
-                <div>{client?.industry || '—'}</div>
-              </div>
-              <div>
-                <div className="text-white/50 text-sm">Email</div>
-                <div>{client?.owner_email || userEmail}</div>
-              </div>
-              <div>
-                <div className="text-white/50 text-sm">Phone</div>
-                <div>{client?.phone || '—'}</div>
-              </div>
-              <div>
-                <div className="text-white/50 text-sm">Address</div>
-                <div>
-                  {client?.address || '—'}
-                  <div className="text-white/60 text-sm">
-                    {[client?.city, client?.province, client?.postal_code].filter(Boolean).join(', ')}
-                  </div>
-                </div>
-              </div>
+        {/* Top cards */}
+        <div className="mt-8 grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-6 shadow-[0_0_0_1px_rgba(255,255,255,0.04)]">
+            <div className="text-lg font-semibold">Business Info</div>
+
+            <div className="mt-4 grid grid-cols-2 gap-y-2 text-sm">
+              <div className="opacity-70">Business</div>
+              <div className="text-right">{client.business_name}</div>
+
+              <div className="opacity-70">Industry</div>
+              <div className="text-right">{client.industry || "—"}</div>
+
+              <div className="opacity-70">Status</div>
+              <div className="text-right">{client.status || "—"}</div>
+
+              <div className="opacity-70">Phone</div>
+              <div className="text-right">{client.phone_number || "—"}</div>
+
+              <div className="opacity-70">Address</div>
+              <div className="text-right">{addressLine || "—"}</div>
             </div>
+
+            <div className="mt-6 text-xs opacity-60">Client ID: {client.id}</div>
           </div>
 
-          {/* Main */}
-          <div className="lg:col-span-2 space-y-6">
-            {/* Calendar */}
-            <div className="rounded-2xl border border-white/10 bg-white/5 p-6">
-              <div className="flex items-center justify-between gap-3">
-                <div className="text-lg font-semibold">Your Calendar</div>
-
-                <div className="flex items-center gap-2">
-                  {integrations?.google_calendar_connected ? (
-                    <span className="px-3 py-1 rounded-full text-xs border border-emerald-400/30 bg-emerald-500/10 text-emerald-300">
-                      You’re Connected
-                    </span>
-                  ) : (
-                    <button
-                      className="px-4 py-2 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10"
-                      onClick={connectCalendar}
-                    >
-                      Connect Calendar
-                    </button>
-                  )}
-
-                  <button
-                    className="px-4 py-2 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10"
-                    onClick={refreshCalendar}
-                    disabled={calendarLoading}
-                  >
-                    {calendarLoading ? 'Refreshing…' : 'Refresh'}
-                  </button>
-                </div>
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-6 shadow-[0_0_0_1px_rgba(255,255,255,0.04)]">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-lg font-semibold">Integrations</div>
+                <div className="mt-1 text-sm opacity-70">Connection status</div>
               </div>
 
-              <div className="flex items-center justify-between mt-4">
-                <button
-                  className="px-3 py-2 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10"
-                  onClick={() => {
-                    const d = new Date(weekStart)
-                    d.setDate(d.getDate() - 7)
-                    setWeekStart(d)
-                  }}
+              <div className="flex gap-2">
+                <span
+                  className={`rounded-full px-3 py-1 text-xs border ${
+                    retellConnected
+                      ? "border-emerald-500/30 bg-emerald-500/15 text-emerald-200"
+                      : "border-white/10 bg-white/5 text-white/70"
+                  }`}
                 >
-                  ← Prev
-                </button>
-
-                <div className="text-white/70">
-                  Week of{' '}
-                  {weekStart.toLocaleDateString(undefined, {
-                    month: 'short',
-                    day: 'numeric',
-                    year: 'numeric',
-                  })}
-                </div>
-
-                <button
-                  className="px-3 py-2 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10"
-                  onClick={() => {
-                    const d = new Date(weekStart)
-                    d.setDate(d.getDate() + 7)
-                    setWeekStart(d)
-                  }}
+                  Retell: {retellConnected ? "Connected" : "Not connected"}
+                </span>
+                <span
+                  className={`rounded-full px-3 py-1 text-xs border ${
+                    calConnected
+                      ? "border-emerald-500/30 bg-emerald-500/15 text-emerald-200"
+                      : "border-white/10 bg-white/5 text-white/70"
+                  }`}
                 >
-                  Next →
-                </button>
-              </div>
-
-              {calendarError && <div className="mt-3 text-sm text-red-300">{calendarError}</div>}
-
-              <div className="mt-4 overflow-auto rounded-xl border border-white/10">
-                <div className="min-w-[900px]">
-                  <div className="grid grid-cols-8 bg-white/5 border-b border-white/10">
-                    <div className="p-3 text-white/60 text-sm">Time</div>
-                    {weekDays.map((d) => (
-                      <div key={d.toISOString()} className="p-3 text-center">
-                        <div className="text-white/60 text-xs">
-                          {d.toLocaleDateString(undefined, { weekday: 'short' })}
-                        </div>
-                        <div className="font-semibold">{d.getDate()}</div>
-                      </div>
-                    ))}
-                  </div>
-
-                  {hours.map((hour) => (
-                    <div key={hour} className="grid grid-cols-8 border-b border-white/10">
-                      <div className="p-3 text-white/60 text-sm">{hour}:00</div>
-                      {weekDays.map((day) => {
-                        const cellEvents = events.filter((e) => eventInCell(e, day, hour))
-                        return (
-                          <div key={day.toISOString() + hour} className="p-2 border-l border-white/10 min-h-[52px]">
-                            {cellEvents.map((e) => (
-                              <div
-                                key={e.id || `${day.toISOString()}-${hour}-${Math.random()}`}
-                                className="rounded-md px-2 py-1 text-xs bg-emerald-500/10 border border-emerald-400/20 text-emerald-200 truncate"
-                                title={e.summary || 'Event'}
-                              >
-                                {e.summary || 'Event'}
-                              </div>
-                            ))}
-                          </div>
-                        )
-                      })}
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="mt-3 text-xs text-white/50">
-                This is your current week-view. If you want it **exactly** like Google Calendar (day/week/month, drag/drop),
-                we’ll swap to FullCalendar next.
+                  Calendar: {calConnected ? "Connected" : "Not connected"}
+                </span>
               </div>
             </div>
 
-            {/* Retell */}
-            <div className="rounded-2xl border border-white/10 bg-white/5 p-6">
-              <div className="flex items-center justify-between gap-3">
-                <div className="text-lg font-semibold">AI Agent Analytics (Retell)</div>
-
-                <div className="flex items-center gap-2">
-                  <select
-                    className="px-3 py-2 rounded-lg border border-white/15 bg-black/40 text-white"
-                    value={retellRange}
-                    onChange={(e) => setRetellRange(e.target.value as any)}
-                  >
-                    <option value="7d">Last 7 days</option>
-                    <option value="30d">Last 30 days</option>
-                    <option value="90d">Last 90 days</option>
-                    <option value="365d">Last 365 days</option>
-                    <option value="all">All time</option>
-                  </select>
-
-                  <button
-                    className="px-4 py-2 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10"
-                    onClick={refreshRetell}
-                    disabled={retellLoading}
-                  >
-                    {retellLoading ? 'Refreshing…' : 'Refresh'}
-                  </button>
-
+            <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <div className="text-base font-semibold">Retell AI</div>
+                <div className="mt-1 text-sm opacity-70">
+                  Phone: {integration?.retell_phone_number || "—"}
+                </div>
+                <div className="mt-4">
                   <span
-                    className={`px-3 py-1 rounded-full text-xs border ${
-                      integrations?.retell_connected
-                        ? 'border-emerald-400/30 bg-emerald-500/10 text-emerald-300'
-                        : 'border-white/15 bg-white/5 text-white/60'
+                    className={`inline-flex rounded-full px-3 py-1 text-xs border ${
+                      retellConnected
+                        ? "border-emerald-500/30 bg-emerald-500/15 text-emerald-200"
+                        : "border-white/10 bg-white/5 text-white/70"
                     }`}
                   >
-                    {integrations?.retell_connected ? 'Retell Connected' : 'Retell Not Connected'}
+                    {retellConnected ? "Connected" : "Not connected"}
                   </span>
                 </div>
               </div>
 
-              {retellError && <div className="mt-3 text-sm text-red-300">{retellError}</div>}
-
-              {!integrations?.retell_connected ? (
-                <div className="mt-5 text-white/60">
-                  Retell isn’t connected for this client yet. Ask TechOps to connect it (agent ID + phone) and add the
-                  master API key to platform settings / env.
+              <div className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                <div className="text-base font-semibold">Google Calendar</div>
+                <div className="mt-1 text-sm opacity-70">
+                  Calendar ID: {integration?.google_calendar_id || "—"}
                 </div>
-              ) : !retell ? (
-                <div className="mt-5 text-white/60">No data loaded.</div>
-              ) : (
-                <>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-5">
-                    <div className="rounded-xl border border-white/10 bg-black/30 p-4">
-                      <div className="text-white/60 text-xs">Total Calls ({retell.range})</div>
-                      <div className="text-2xl font-semibold">{retell.summary.totalCalls}</div>
-                    </div>
-                    <div className="rounded-xl border border-white/10 bg-black/30 p-4">
-                      <div className="text-white/60 text-xs">Ended Calls</div>
-                      <div className="text-2xl font-semibold">{retell.summary.totalEnded}</div>
-                    </div>
-                    <div className="rounded-xl border border-white/10 bg-black/30 p-4">
-                      <div className="text-white/60 text-xs">Avg Duration</div>
-                      <div className="text-2xl font-semibold">{formatSec(retell.summary.avgDurationSec)}</div>
-                    </div>
-                    <div className="rounded-xl border border-white/10 bg-black/30 p-4">
-                      <div className="text-white/60 text-xs">Success Rate</div>
-                      <div className="text-2xl font-semibold">{retell.summary.successRate}%</div>
-                    </div>
-                  </div>
+                <div className="mt-4">
+                  <span
+                    className={`inline-flex rounded-full px-3 py-1 text-xs border ${
+                      calConnected
+                        ? "border-emerald-500/30 bg-emerald-500/15 text-emerald-200"
+                        : "border-white/10 bg-white/5 text-white/70"
+                    }`}
+                  >
+                    {calConnected ? "Connected" : "Not connected"}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
 
-                  <div className="mt-6 rounded-xl border border-white/10 bg-black/20 p-4">
-                    <div className="text-sm font-semibold mb-2">Recent Calls</div>
-                    {retell.recentCalls?.length ? (
-                      <div className="space-y-2">
-                        {retell.recentCalls.map((c) => (
-                          <div
-                            key={c.call_id}
-                            className="flex flex-wrap items-center justify-between gap-2 text-sm border border-white/10 rounded-lg px-3 py-2 bg-black/30"
-                          >
-                            <div className="text-white/80 truncate max-w-[360px]">{c.call_id}</div>
-                            <div className="text-white/60">
-                              {c.start_timestamp ? new Date(c.start_timestamp).toLocaleString() : '—'}
-                            </div>
-                            <div className="text-white/60">{c.duration_ms ? `${Math.round(c.duration_ms / 1000)}s` : '—'}</div>
-                            <div className="text-white/60">{c.disconnection_reason || '—'}</div>
-                            <div className="text-white/60">{c.sentiment || '—'}</div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="text-white/60 text-sm">No calls in this range.</div>
-                    )}
-                  </div>
+        {/* CALENDAR FULL WIDTH */}
+        <div className="mt-8 rounded-2xl border border-white/10 bg-white/5 p-6">
+          <div className="flex items-start justify-between gap-4 flex-wrap">
+            <div>
+              <div className="text-lg font-semibold">Calendar</div>
+              <div className="text-sm opacity-70">Month view + daily details</div>
+            </div>
 
-                  <div className="mt-3 text-xs text-white/50">
-                    Want the **same richness** as Retell’s Analytics page? We’ll expand these cards into multiple charts + breakdowns next.
-                  </div>
-                </>
+            <div className="flex items-center gap-2">
+              <button
+                className="rounded-xl border border-white/15 bg-white/5 px-4 py-2 hover:bg-white/10"
+                onClick={() => setMonth(addMonths(month, -1))}
+              >
+                Prev
+              </button>
+              <div className="px-3 py-2 rounded-xl border border-white/10 bg-black/20 text-sm">
+                {monthLabel}
+              </div>
+              <button
+                className="rounded-xl border border-white/15 bg-white/5 px-4 py-2 hover:bg-white/10"
+                onClick={() => setMonth(addMonths(month, 1))}
+              >
+                Next
+              </button>
+
+              <button
+                className="ml-2 rounded-xl border border-emerald-500/30 bg-emerald-500/15 px-4 py-2 hover:bg-emerald-500/20"
+                onClick={() => refreshCalendar(client.id, month)}
+                disabled={eventsLoading}
+              >
+                {eventsLoading ? "Refreshing…" : "Refresh"}
+              </button>
+            </div>
+          </div>
+
+          {/* Calendar grid */}
+          <div className="mt-6 rounded-2xl border border-white/10 bg-black/20 overflow-hidden">
+            <div className="grid grid-cols-7 border-b border-white/10 text-xs uppercase tracking-wide opacity-70">
+              {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
+                <div key={d} className="px-4 py-3">
+                  {d}
+                </div>
+              ))}
+            </div>
+
+            <div className="grid grid-cols-7">
+              {monthDays.map((d, idx) => {
+                const inMonth = d.getMonth() === month.getMonth();
+                const today = sameDay(d, new Date());
+                const evs = eventsByDay.get(dayKey(d)) || [];
+                const isSelected = selectedDay ? sameDay(d, selectedDay) : false;
+
+                return (
+                  <button
+                    key={idx}
+                    onClick={() => setSelectedDay(new Date(d))}
+                    className={[
+                      "text-left px-4 py-4 border-t border-white/5 min-h-[92px] hover:bg-white/5 transition",
+                      inMonth ? "" : "opacity-40",
+                      today ? "bg-emerald-500/10" : "",
+                      isSelected ? "outline outline-2 outline-emerald-500/40 -outline-offset-2" : "",
+                    ].join(" ")}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="text-sm font-medium">{d.getDate()}</div>
+                      {evs.length > 0 && (
+                        <div className="text-[10px] rounded-full px-2 py-0.5 border border-emerald-500/30 bg-emerald-500/10 text-emerald-200">
+                          {evs.length}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* tiny preview list */}
+                    <div className="mt-2 space-y-1">
+                      {evs.slice(0, 2).map((e) => (
+                        <div
+                          key={e.id}
+                          className="text-xs truncate opacity-80"
+                          title={e.summary}
+                        >
+                          • {e.summary}
+                        </div>
+                      ))}
+                      {evs.length > 2 && (
+                        <div className="text-xs opacity-50">+ {evs.length - 2} more</div>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Day details */}
+          <div className="mt-6 rounded-2xl border border-white/10 bg-black/20 p-5">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div className="text-sm opacity-80">
+                {selectedDay ? (
+                  <>
+                    Events on{" "}
+                    <span className="font-semibold">
+                      {new Intl.DateTimeFormat(undefined, {
+                        weekday: "long",
+                        month: "long",
+                        day: "numeric",
+                        year: "numeric",
+                      }).format(selectedDay)}
+                    </span>
+                  </>
+                ) : (
+                  "Click a day to see details"
+                )}
+              </div>
+
+              {selectedDay && (
+                <button
+                  className="rounded-xl border border-white/15 bg-white/5 px-4 py-2 hover:bg-white/10 text-sm"
+                  onClick={() => setSelectedDay(null)}
+                >
+                  Clear
+                </button>
               )}
             </div>
+
+            <div className="mt-4 space-y-3">
+              {selectedDay && selectedEvents.length === 0 && (
+                <div className="text-sm opacity-60">No events found for this day.</div>
+              )}
+
+              {selectedEvents.map((e) => {
+                const start = e.start.dateTime || e.start.date;
+                const end = e.end.dateTime || e.end.date;
+
+                return (
+                  <a
+                    key={e.id}
+                    href={e.htmlLink || "#"}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="block rounded-xl border border-white/10 bg-white/5 p-4 hover:bg-white/10 transition"
+                  >
+                    <div className="font-semibold">{e.summary}</div>
+                    <div className="mt-1 text-sm opacity-70">
+                      {start ? new Date(start).toLocaleString() : "—"}
+                      {end ? ` → ${new Date(end).toLocaleString()}` : ""}
+                    </div>
+                  </a>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        {/* RETELL ANALYTICS BELOW CALENDAR */}
+        <div className="mt-8 rounded-2xl border border-white/10 bg-white/5 p-6">
+          <div className="flex items-start justify-between gap-4 flex-wrap">
+            <div>
+              <div className="text-lg font-semibold">Retell Analytics</div>
+              <div className="text-sm opacity-70">Calls + performance overview</div>
+            </div>
+
+            <button
+              className="rounded-xl border border-emerald-500/30 bg-emerald-500/15 px-4 py-2 hover:bg-emerald-500/20"
+              onClick={() => refreshRetell(client.id)}
+              disabled={retellLoading}
+            >
+              {retellLoading ? "Refreshing…" : "Refresh"}
+            </button>
+          </div>
+
+          <div className="mt-6 grid grid-cols-1 md:grid-cols-4 gap-4">
+            <StatCard label="Total Calls" value={retell?.totalCalls} />
+            <StatCard label="Answered" value={retell?.answered} />
+            <StatCard label="Missed" value={retell?.missed} />
+            <StatCard
+              label="Avg Duration"
+              value={
+                typeof retell?.avgDurationSec === "number"
+                  ? `${Math.round(retell.avgDurationSec)}s`
+                  : undefined
+              }
+            />
+          </div>
+
+          <div className="mt-4 text-xs opacity-60">
+            Last sync: {retell?.lastSyncAt ? new Date(retell.lastSyncAt).toLocaleString() : "—"}
           </div>
         </div>
       </div>
     </div>
-  )
+  );
+}
+
+function StatCard({ label, value }: { label: string; value?: any }) {
+  const display = value === 0 ? "0" : value ? String(value) : "—";
+  return (
+    <div className="rounded-2xl border border-white/10 bg-black/20 p-5">
+      <div className="text-sm opacity-70">{label}</div>
+      <div className="mt-2 text-2xl font-semibold">{display}</div>
+    </div>
+  );
 }

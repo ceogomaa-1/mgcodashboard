@@ -1,252 +1,130 @@
-'use client';
+'use client'
 
-import { useState, useEffect } from 'react';
-import { createClient } from '@/lib/supabase/client';
-import { useRouter, useParams } from 'next/navigation';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { ArrowLeft, Calendar, AlertCircle, Loader2, CheckCircle } from 'lucide-react';
-import Link from 'next/link';
+import { useParams, useRouter } from 'next/navigation'
+import { useEffect, useState } from 'react'
 
-export default function ConnectCalendar() {
-  const router = useRouter();
-  const params = useParams();
-  const clientId = Array.isArray(params.id) ? params.id[0] : params.id;
+type Integration = {
+  google_calendar_connected: boolean
+  google_calendar_email: string | null
+  google_calendar_id: string | null
+}
 
-  const supabase = createClient();
+export default function CalendarIntegrationPage() {
+  const params = useParams()
+  const router = useRouter()
+  const clientId = params?.id as string
 
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState(false);
+  const [loading, setLoading] = useState(true)
+  const [integration, setIntegration] = useState<Integration | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
-  const [clientName, setClientName] = useState('');
-  const [isConnected, setIsConnected] = useState(false);
-
-  const [formData, setFormData] = useState({
-    google_calendar_id: '',
-    google_calendar_email: '',
-  });
+  async function load() {
+    setLoading(true)
+    setError(null)
+    try {
+      const res = await fetch(`/api/techops/clients/${clientId}/integrations`, { cache: 'no-store' })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json?.error || 'Failed to load integrations')
+      setIntegration(json.integration)
+    } catch (e: any) {
+      setError(e.message)
+    } finally {
+      setLoading(false)
+    }
+  }
 
   useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const { data: client } = await supabase
-          .from('clients')
-          .select('business_name')
-          .eq('id', clientId)
-          .single();
-
-        if (client) setClientName(client.business_name);
-
-        const { data: integration } = await supabase
-          .from('integrations')
-          .select('*')
-          .eq('client_id', clientId)
-          .maybeSingle();
-
-        if (integration) {
-          setIsConnected(!!integration.google_calendar_connected);
-          setFormData({
-            google_calendar_id: integration.google_calendar_id || '',
-            google_calendar_email: integration.google_calendar_email || '',
-          });
-        } else {
-          setIsConnected(false);
-        }
-      } catch (err: any) {
-        console.error(err);
-        setError(err?.message || 'Failed to load integration');
-      }
-    };
-
-    fetchData();
+    load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clientId]);
+  }, [clientId])
 
-  const handleChange = (field: string, value: string) => {
-    setFormData(prev => ({ ...prev, [field]: value }));
-  };
+  function connect() {
+    const returnTo = `/techops/clients/${clientId}/integrations/calendar`
+    window.location.href = `/api/auth/google?clientId=${encodeURIComponent(clientId)}&returnTo=${encodeURIComponent(returnTo)}`
+  }
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSaving(true);
-    setError('');
-    setSuccess(false);
-
-    try {
-      const { error } = await supabase
-        .from('integrations')
-        .upsert(
-          {
-            client_id: clientId,
-            google_calendar_id: formData.google_calendar_id,
-            google_calendar_email: formData.google_calendar_email,
-            google_calendar_connected: true,
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: 'client_id' }
-        );
-
-      if (error) throw error;
-
-      setSuccess(true);
-      setIsConnected(true);
-
-      setTimeout(() => {
-        window.location.href = `/techops/clients/${clientId}`;
-      }, 900);
-    } catch (err: any) {
-      console.error(err);
-      setError(err?.message || 'Failed to connect calendar');
-    } finally {
-      setSaving(false);
+  async function disconnect() {
+    setError(null)
+    const res = await fetch(`/api/techops/clients/${clientId}/integrations/calendar/disconnect`, { method: 'POST' })
+    const json = await res.json()
+    if (!res.ok) {
+      setError(json?.error || 'Failed to disconnect')
+      return
     }
-  };
-
-  const handleDisconnect = async () => {
-    if (!confirm('Disconnect Google Calendar for this client?')) return;
-
-    setSaving(true);
-    setError('');
-    setSuccess(false);
-
-    try {
-      const { error } = await supabase
-        .from('integrations')
-        .upsert(
-          {
-            client_id: clientId,
-            google_calendar_id: null,
-            google_calendar_email: null,
-            google_calendar_connected: false,
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: 'client_id' }
-        );
-
-      if (error) throw error;
-
-      setFormData({ google_calendar_id: '', google_calendar_email: '' });
-      setIsConnected(false);
-      setSuccess(true);
-
-      setTimeout(() => {
-        window.location.href = `/techops/clients/${clientId}`;
-      }, 900);
-    } catch (err: any) {
-      console.error(err);
-      setError(err?.message || 'Failed to disconnect');
-    } finally {
-      setSaving(false);
-    }
-  };
+    await load()
+  }
 
   return (
-    <div className="min-h-screen bg-[#0A0A0A]">
-      <div className="border-b border-white/5 bg-black/40 backdrop-blur-xl">
-        <div className="container mx-auto px-6 py-4">
-          <Link href={`/techops/clients/${clientId}`} className="inline-flex items-center text-gray-400 hover:text-white">
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            Back to Client Details
-          </Link>
+    <div className="min-h-screen bg-black text-white">
+      <div className="max-w-4xl mx-auto px-6 py-10">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-3xl font-semibold">Google Calendar</div>
+            <div className="text-white/60">Connect via OAuth so events load in real-time.</div>
+          </div>
+
+          <button
+            className="px-4 py-2 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10"
+            onClick={() => router.back()}
+          >
+            Back
+          </button>
+        </div>
+
+        <div className="mt-8 rounded-2xl border border-white/10 bg-white/5 p-6">
+          {loading ? (
+            <div className="text-white/60">Loading…</div>
+          ) : error ? (
+            <div className="text-red-300">{error}</div>
+          ) : (
+            <>
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <div className="text-lg font-semibold">Status</div>
+                  <div className="text-white/70">
+                    {integration?.google_calendar_connected ? 'Connected ✅' : 'Not connected ❌'}
+                  </div>
+                  {integration?.google_calendar_connected && (
+                    <div className="mt-2 text-sm text-white/60">
+                      <div>Email: {integration.google_calendar_email || '—'}</div>
+                      <div>Calendar ID: {integration.google_calendar_id || 'primary'}</div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {!integration?.google_calendar_connected ? (
+                    <button
+                      className="px-5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold"
+                      onClick={connect}
+                    >
+                      Connect (OAuth)
+                    </button>
+                  ) : (
+                    <button
+                      className="px-5 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white font-semibold"
+                      onClick={disconnect}
+                    >
+                      Disconnect
+                    </button>
+                  )}
+
+                  <button
+                    className="px-4 py-2 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10"
+                    onClick={load}
+                  >
+                    Refresh
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-5 text-xs text-white/50">
+                If you ever see <b>invalid_grant</b>, it means Google revoked the refresh token → just hit Disconnect, then Connect again.
+              </div>
+            </>
+          )}
         </div>
       </div>
-
-      <div className="container mx-auto px-6 py-8 max-w-3xl">
-        <Card className="border-white/5 bg-white/[0.02]">
-          <CardHeader>
-            <CardTitle className="text-white flex items-center gap-2">
-              <Calendar className="w-5 h-5 text-emerald-400" />
-              Google Calendar • {clientName || 'Client'}
-            </CardTitle>
-            <CardDescription className="text-gray-500">
-              {isConnected ? 'Connected — update details or disconnect.' : 'Connect calendar metadata for this client.'}
-            </CardDescription>
-          </CardHeader>
-
-          <CardContent className="space-y-4">
-            {success && (
-              <div className="flex items-start gap-3 p-3 border border-emerald-500/20 rounded-lg bg-emerald-500/10">
-                <CheckCircle className="w-5 h-5 text-emerald-400 mt-0.5" />
-                <div>
-                  <p className="text-emerald-300 font-medium">Saved</p>
-                  <p className="text-emerald-200/80 text-sm">Redirecting…</p>
-                </div>
-              </div>
-            )}
-
-            {error && (
-              <div className="flex items-start gap-3 p-3 border border-red-500/20 rounded-lg bg-red-500/10">
-                <AlertCircle className="w-5 h-5 text-red-400 mt-0.5" />
-                <div>
-                  <p className="text-red-300 font-medium">Error</p>
-                  <p className="text-red-200/80 text-sm">{error}</p>
-                </div>
-              </div>
-            )}
-
-            <form onSubmit={handleSubmit} className="space-y-5">
-              <div className="space-y-2">
-                <Label htmlFor="google_calendar_id" className="text-white">Google Calendar ID *</Label>
-                <Input
-                  id="google_calendar_id"
-                  value={formData.google_calendar_id}
-                  onChange={(e) => handleChange('google_calendar_id', e.target.value)}
-                  placeholder="primary or calendarId@group.calendar.google.com"
-                  className="bg-white/5 border-white/10 text-white placeholder:text-gray-500"
-                  required
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="google_calendar_email" className="text-white">Google Calendar Email *</Label>
-                <Input
-                  id="google_calendar_email"
-                  type="email"
-                  value={formData.google_calendar_email}
-                  onChange={(e) => handleChange('google_calendar_email', e.target.value)}
-                  placeholder="calendar@email.com"
-                  className="bg-white/5 border-white/10 text-white placeholder:text-gray-500"
-                  required
-                />
-              </div>
-
-              <div className="flex items-center justify-between gap-3">
-                {isConnected ? (
-                  <Button
-                    type="button"
-                    onClick={handleDisconnect}
-                    variant="outline"
-                    className="border-red-500/30 bg-red-500/10 text-red-300 hover:bg-red-500/20"
-                    disabled={saving}
-                  >
-                    Disconnect
-                  </Button>
-                ) : (
-                  <div />
-                )}
-
-                <Button
-                  type="submit"
-                  className="bg-emerald-500 hover:bg-emerald-600 text-white"
-                  disabled={saving}
-                >
-                  {saving ? (
-                    <>
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      Saving...
-                    </>
-                  ) : (
-                    isConnected ? 'Save Changes' : 'Connect Calendar'
-                  )}
-                </Button>
-              </div>
-            </form>
-          </CardContent>
-        </Card>
-      </div>
     </div>
-  );
+  )
 }

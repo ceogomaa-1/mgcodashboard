@@ -1,77 +1,45 @@
+// app/api/techops/clients/list/route.ts
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 
 export async function GET() {
   try {
-    const supabase = await createClient();
-
-    // 1) Fetch clients
-    const { data: clients, error: clientsError } = await supabase
+    const { data: clients, error: clientsErr } = await supabaseAdmin
       .from("clients")
-      .select(
-        `
-        id,
-        business_name,
-        owner_email,
-        industry,
-        phone_number,
-        address,
-        city,
-        state,
-        zip_code,
-        status,
-        created_at
-        `
-      )
+      .select("*")
       .order("created_at", { ascending: false });
 
-    if (clientsError) {
-      return NextResponse.json(
-        { error: clientsError.message },
-        { status: 500 }
-      );
+    if (clientsErr) {
+      return NextResponse.json({ error: clientsErr.message }, { status: 500 });
     }
 
-    // 2) Fetch integrations
-    const { data: integrations, error: integrationsError } = await supabase
+    const clientIds = (clients ?? []).map((c: any) => c.id);
+    const { data: integrations, error: integErr } = await supabaseAdmin
       .from("integrations")
-      .select(
-        `
-        id,
-        retell_connected,
-        google_calendar_connected
-        `
-      );
+      .select("*")
+      .in("client_id", clientIds);
 
-    if (integrationsError) {
-      return NextResponse.json(
-        { error: integrationsError.message },
-        { status: 500 }
-      );
+    if (integErr) {
+      return NextResponse.json({ error: integErr.message }, { status: 500 });
     }
 
-    // 3) Merge integrations into clients (IMPORTANT PART)
-    const mergedClients = clients.map((client) => {
-      const integration = integrations.find(
-        (i) => i.id === client.id
-      );
+    const integByClientId = new Map<string, any>();
+    (integrations ?? []).forEach((i: any) => integByClientId.set(i.client_id, i));
 
+    const merged = (clients ?? []).map((c: any) => {
+      const i = integByClientId.get(c.id);
       return {
-        ...client,
-        retell_connected: integration?.retell_connected ?? false,
-        google_calendar_connected:
-          integration?.google_calendar_connected ?? false,
+        ...c,
+        integrations: {
+          retell_connected: !!i?.retell_connected,
+          google_calendar_connected: !!i?.google_calendar_connected,
+          google_calendar_id: i?.google_calendar_id ?? null,
+        },
       };
     });
 
-    return NextResponse.json(
-      { clients: mergedClients },
-      { status: 200 }
-    );
+    return NextResponse.json({ clients: merged });
   } catch (e: any) {
-    return NextResponse.json(
-      { error: e.message || "Unknown error" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: e?.message ?? "Unknown error" }, { status: 500 });
   }
 }

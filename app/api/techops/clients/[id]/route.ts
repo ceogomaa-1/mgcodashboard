@@ -1,31 +1,33 @@
-import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+// app/api/techops/clients/[id]/route.ts
+import { NextResponse } from "next/server";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 
-export async function DELETE(
-  _req: Request,
-  ctx: { params: Promise<{ id: string }> }
-) {
+export async function DELETE(_: Request, { params }: { params: { id: string } }) {
   try {
-    const { id: clientId } = await ctx.params
+    const clientId = params.id;
 
-    if (!clientId) {
-      return NextResponse.json({ error: 'Missing client id' }, { status: 400 })
+    // 1) Delete integrations row(s) for that client
+    const { error: integErr } = await supabaseAdmin
+      .from("integrations")
+      .delete()
+      .eq("client_id", clientId);
+
+    if (integErr) {
+      return NextResponse.json({ error: integErr.message }, { status: 500 });
     }
 
-    const supabase = await createClient()
+    // 2) Delete the client
+    const { error: clientErr } = await supabaseAdmin
+      .from("clients")
+      .delete()
+      .eq("id", clientId);
 
-    // delete related rows first (unless you use FK cascade in Supabase)
-    await supabase.from('client_integrations').delete().eq('client_id', clientId)
-    await supabase.from('client_retell_agents').delete().eq('client_id', clientId)
-
-    const { error } = await supabase.from('clients').delete().eq('id', clientId)
-
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 })
+    if (clientErr) {
+      return NextResponse.json({ error: clientErr.message }, { status: 500 });
     }
 
-    return NextResponse.json({ ok: true }, { status: 200 })
+    return NextResponse.json({ ok: true });
   } catch (e: any) {
-    return NextResponse.json({ error: e?.message || 'Unknown error' }, { status: 500 })
+    return NextResponse.json({ error: e?.message ?? "Unknown error" }, { status: 500 });
   }
 }
