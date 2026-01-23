@@ -3,43 +3,56 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 
 export async function GET() {
-  try {
-    const { data: clients, error: clientsErr } = await supabaseAdmin
-      .from("clients")
-      .select("*")
-      .order("created_at", { ascending: false });
+  // 1) Load clients (ONLY select columns that actually exist)
+  const { data: clients, error: cErr } = await supabaseAdmin
+    .from("clients")
+    .select("id,name,email,industry,status,created_at")
+    .order("created_at", { ascending: false });
 
-    if (clientsErr) {
-      return NextResponse.json({ error: clientsErr.message }, { status: 500 });
-    }
-
-    const clientIds = (clients ?? []).map((c: any) => c.id);
-    const { data: integrations, error: integErr } = await supabaseAdmin
-      .from("integrations")
-      .select("*")
-      .in("client_id", clientIds);
-
-    if (integErr) {
-      return NextResponse.json({ error: integErr.message }, { status: 500 });
-    }
-
-    const integByClientId = new Map<string, any>();
-    (integrations ?? []).forEach((i: any) => integByClientId.set(i.client_id, i));
-
-    const merged = (clients ?? []).map((c: any) => {
-      const i = integByClientId.get(c.id);
-      return {
-        ...c,
-        integrations: {
-          retell_connected: !!i?.retell_connected,
-          google_calendar_connected: !!i?.google_calendar_connected,
-          google_calendar_id: i?.google_calendar_id ?? null,
-        },
-      };
-    });
-
-    return NextResponse.json({ clients: merged });
-  } catch (e: any) {
-    return NextResponse.json({ error: e?.message ?? "Unknown error" }, { status: 500 });
+  if (cErr) {
+    return NextResponse.json({ error: cErr.message }, { status: 500 });
   }
+
+  const clientIds = (clients ?? [])
+    .map((c: any) => c?.id)
+    .filter(Boolean) as string[];
+
+  // 2) Load integrations for those clients
+  const { data: integrations, error: iErr } = await supabaseAdmin
+    .from("integrations")
+    .select(
+      "client_id,retell_connected,google_calendar_connected,google_calendar_embed_url"
+    )
+    .in("client_id", clientIds);
+
+  if (iErr) {
+    return NextResponse.json({ error: iErr.message }, { status: 500 });
+  }
+
+  const integMap = new Map<string, any>();
+  (integrations ?? []).forEach((row: any) => integMap.set(row.client_id, row));
+
+  // 3) Normalize final payload (NO undefined ids)
+  const result = (clients ?? []).map((c: any) => {
+    const integ = integMap.get(c.id);
+
+    const embedUrl = integ?.google_calendar_embed_url ?? null;
+    const calendarConnected =
+      Boolean(integ?.google_calendar_connected) || Boolean(embedUrl);
+
+    return {
+      id: c.id,
+      name: c.name ?? null,
+      email: c.email ?? null,
+      industry: c.industry ?? null,
+      status: c.status ?? null,
+      created_at: c.created_at ?? null,
+
+      calendar_connected: calendarConnected,
+      retell_connected: Boolean(integ?.retell_connected),
+      google_calendar_embed_url: embedUrl,
+    };
+  });
+
+  return NextResponse.json({ clients: result }, { status: 200 });
 }

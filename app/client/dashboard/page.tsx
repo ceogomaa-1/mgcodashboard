@@ -1,156 +1,195 @@
-"use client";
+'use client';
 
-import React, { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+
+// UI
+import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+
+// Supabase client factory
 import { createClient } from "@/lib/supabase/client";
+
+// Helpers
+function startOfMonth(d: Date) {
+  return new Date(d.getFullYear(), d.getMonth(), 1);
+}
+function endOfMonth(d: Date) {
+  return new Date(d.getFullYear(), d.getMonth() + 1, 0);
+}
+function addMonths(d: Date, delta: number) {
+  return new Date(d.getFullYear(), d.getMonth() + delta, 1);
+}
+function formatMonthLabel(d: Date) {
+  return d.toLocaleString("en-US", { month: "long", year: "numeric" });
+}
 
 type ClientRow = {
   id: string;
-  business_name: string;
-  owner_email: string;
+  name: string | null;
+  email: string | null;
   industry: string | null;
-  phone_number: string | null;
-  address: string | null;
-  city: string | null;
-  state: string | null;
-  zip_code: string | null;
   status: string | null;
+  created_at?: string;
 };
 
 type IntegrationRow = {
   retell_connected: boolean;
   retell_phone_number: string | null;
   google_calendar_connected: boolean;
+  google_calendar_email?: string | null;
   google_calendar_id: string | null;
+  google_calendar_embed_url?: string | null;
 };
 
-type GoogleEvent = {
+type CalendarEvent = {
   id: string;
-  summary: string;
-  start: { dateTime?: string; date?: string };
-  end: { dateTime?: string; date?: string };
-  htmlLink?: string;
+  summary?: string;
+  start?: { dateTime?: string; date?: string };
+  end?: { dateTime?: string; date?: string };
+  location?: string;
+  description?: string;
 };
 
-type RetellAnalytics = {
-  totalCalls?: number;
-  answered?: number;
-  missed?: number;
-  avgDurationSec?: number;
-  lastSyncAt?: string;
-};
-
-function iso(d: Date) {
-  return d.toISOString();
-}
-
-function startOfMonth(d: Date) {
-  return new Date(d.getFullYear(), d.getMonth(), 1);
-}
-function endOfMonth(d: Date) {
-  return new Date(d.getFullYear(), d.getMonth() + 1, 1);
-}
-function addMonths(d: Date, n: number) {
-  return new Date(d.getFullYear(), d.getMonth() + n, 1);
-}
-function sameDay(a: Date, b: Date) {
-  return (
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate()
-  );
+function formatEventTime(e: CalendarEvent) {
+  const start = e.start?.dateTime || e.start?.date;
+  const end = e.end?.dateTime || e.end?.date;
+  if (!start) return "—";
+  const s = new Date(start);
+  if (!end) return s.toLocaleString();
+  const en = new Date(end);
+  const sameDay = s.toDateString() === en.toDateString();
+  if (sameDay) {
+    return `${s.toLocaleDateString()} ${s.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} – ${en.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+  }
+  return `${s.toLocaleString()} – ${en.toLocaleString()}`;
 }
 
 export default function ClientDashboardPage() {
   const router = useRouter();
+
+  // Supabase
   const supabase = useMemo(() => createClient(), []);
 
+  // Core
   const [loading, setLoading] = useState(true);
   const [meEmail, setMeEmail] = useState<string>("");
-
   const [client, setClient] = useState<ClientRow | null>(null);
   const [integration, setIntegration] = useState<IntegrationRow | null>(null);
 
-  const [month, setMonth] = useState<Date>(() => startOfMonth(new Date()));
-  const [events, setEvents] = useState<GoogleEvent[]>([]);
-  const [eventsLoading, setEventsLoading] = useState(false);
-
-  const [retell, setRetell] = useState<RetellAnalytics | null>(null);
-  const [retellLoading, setRetellLoading] = useState(false);
-
+  // Calendar state (legacy month view)
+  const [month, setMonth] = useState(() => startOfMonth(new Date()));
+  const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [selectedDay, setSelectedDay] = useState<Date | null>(null);
 
-  const monthLabel = useMemo(() => {
-    const fmt = new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric" });
-    return fmt.format(month);
-  }, [month]);
+  // Retell panel state
+  const [retellStats, setRetellStats] = useState<any>(null);
 
-  const monthDays = useMemo(() => {
+  const clientId = client?.id || "";
+
+  const monthLabel = useMemo(() => formatMonthLabel(month), [month]);
+
+  const days = useMemo(() => {
     const start = startOfMonth(month);
     const end = endOfMonth(month);
-    const days: Date[] = [];
 
-    // build grid starting Sunday
+    // build 6-week grid
     const gridStart = new Date(start);
     gridStart.setDate(start.getDate() - start.getDay());
 
-    // 6 weeks grid
-    for (let i = 0; i < 42; i++) {
-      const d = new Date(gridStart);
-      d.setDate(gridStart.getDate() + i);
-      if (d < endOfMonth(addMonths(month, -1)) || d > endOfMonth(addMonths(month, 2))) {
-        // safety guard (doesn't really happen)
-      }
-      days.push(d);
+    const gridEnd = new Date(end);
+    gridEnd.setDate(end.getDate() + (6 - end.getDay()));
+
+    const out: Date[] = [];
+    const cur = new Date(gridStart);
+    while (cur <= gridEnd) {
+      out.push(new Date(cur));
+      cur.setDate(cur.getDate() + 1);
     }
-    return days;
+    return out;
   }, [month]);
 
   const eventsByDay = useMemo(() => {
-    const map = new Map<string, GoogleEvent[]>();
+    const map: Record<string, CalendarEvent[]> = {};
     for (const e of events) {
-      const dt = e.start.dateTime || e.start.date;
-      if (!dt) continue;
-      const d = new Date(dt);
-      const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
-      const arr = map.get(key) || [];
-      arr.push(e);
-      map.set(key, arr);
+      const raw = e.start?.dateTime || e.start?.date;
+      if (!raw) continue;
+      const key = new Date(raw).toISOString().slice(0, 10);
+      map[key] = map[key] || [];
+      map[key].push(e);
+    }
+    for (const k of Object.keys(map)) {
+      map[k].sort((a, b) => {
+        const as = new Date((a.start?.dateTime || a.start?.date) as string).getTime();
+        const bs = new Date((b.start?.dateTime || b.start?.date) as string).getTime();
+        return as - bs;
+      });
     }
     return map;
   }, [events]);
 
-  const dayKey = (d: Date) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+  async function refreshCalendar(cid: string, m: Date) {
+    if (!cid) return;
+    try {
+      const start = startOfMonth(m).toISOString();
+      const end = endOfMonth(m).toISOString();
+
+      const res = await fetch(`/api/calendar/events?clientId=${encodeURIComponent(cid)}&timeMin=${encodeURIComponent(start)}&timeMax=${encodeURIComponent(end)}`, {
+        cache: "no-store",
+      });
+
+      if (!res.ok) {
+        const t = await res.text();
+        console.error("calendar events error:", t);
+        setEvents([]);
+        return;
+      }
+      const json = await res.json();
+      setEvents(Array.isArray(json?.events) ? json.events : []);
+      if (!selectedDay) setSelectedDay(startOfMonth(m));
+    } catch (e) {
+      console.error(e);
+      setEvents([]);
+    }
+  }
+
+  async function refreshRetell(cid: string) {
+    if (!cid) return;
+    try {
+      const res = await fetch(`/api/retell/analytics?clientId=${encodeURIComponent(cid)}`, { cache: "no-store" });
+      if (!res.ok) {
+        setRetellStats(null);
+        return;
+      }
+      const json = await res.json();
+      setRetellStats(json);
+    } catch {
+      setRetellStats(null);
+    }
+  }
 
   async function loadMeAndClient() {
     setLoading(true);
 
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
-    const email = user?.email || "";
+    // 1) Ensure auth session
+    const { data: authData } = await supabase.auth.getUser();
+    const email = authData?.user?.email || "";
     setMeEmail(email);
 
     if (!email) {
-      router.replace("/client/login");
-      return;
-    }
-
-    // Find client by owner_email
-    const { data: clientRow, error: cErr } = await supabase
-      .from("clients")
-      .select("id,business_name,owner_email,industry,phone_number,address,city,state,zip_code,status")
-      .eq("owner_email", email)
-      .maybeSingle();
-
-    if (cErr) {
-      console.error(cErr);
-      setClient(null);
-      setIntegration(null);
       setLoading(false);
       return;
     }
+
+    // 2) Load client row tied to this email
+    const { data: clientRow, error: cErr } = await supabase
+      .from("clients")
+      .select("id,name,email,industry,status,created_at")
+      .eq("email", email)
+      .maybeSingle();
+
+    if (cErr) console.error(cErr);
 
     if (!clientRow) {
       setClient(null);
@@ -161,9 +200,12 @@ export default function ClientDashboardPage() {
 
     setClient(clientRow as any);
 
+    // 3) Load integrations
     const { data: intRow, error: iErr } = await supabase
       .from("integrations")
-      .select("retell_connected,retell_phone_number,google_calendar_connected,google_calendar_id")
+      .select(
+        "retell_connected,retell_phone_number,google_calendar_connected,google_calendar_id,google_calendar_embed_url"
+      )
       .eq("client_id", clientRow.id)
       .maybeSingle();
 
@@ -173,66 +215,12 @@ export default function ClientDashboardPage() {
     setLoading(false);
 
     // Load external panels
-    await Promise.all([refreshCalendar(clientRow.id, month), refreshRetell(clientRow.id)]);
-  }
-
-  async function refreshCalendar(clientId: string, monthDate: Date) {
-    setEventsLoading(true);
-    try {
-      const start = iso(startOfMonth(monthDate));
-      const end = iso(endOfMonth(monthDate));
-
-      const res = await fetch(
-        `/api/calendar/events?clientId=${encodeURIComponent(clientId)}&start=${encodeURIComponent(
-          start
-        )}&end=${encodeURIComponent(end)}`,
-        { cache: "no-store" }
-      );
-
-      if (!res.ok) {
-        const t = await res.text();
-        console.error("calendar events error:", t);
-        setEvents([]);
-        return;
-      }
-
-      const json = await res.json();
-      setEvents(Array.isArray(json.events) ? json.events : []);
-    } catch (e) {
-      console.error(e);
-      setEvents([]);
-    } finally {
-      setEventsLoading(false);
+    // If we have a Google Calendar embed URL, we don't need the OAuth-based events API at all.
+    if (!intRow?.google_calendar_embed_url) {
+      await Promise.all([refreshCalendar(clientRow.id, month), refreshRetell(clientRow.id)]);
+    } else {
+      await Promise.all([refreshRetell(clientRow.id)]);
     }
-  }
-
-  async function refreshRetell(clientId: string) {
-    setRetellLoading(true);
-    try {
-      const res = await fetch(`/api/retell/analytics?clientId=${encodeURIComponent(clientId)}`, {
-        cache: "no-store",
-      });
-
-      if (!res.ok) {
-        const t = await res.text();
-        console.error("retell analytics error:", t);
-        setRetell(null);
-        return;
-      }
-
-      const json = await res.json();
-      setRetell(json?.analytics || null);
-    } catch (e) {
-      console.error(e);
-      setRetell(null);
-    } finally {
-      setRetellLoading(false);
-    }
-  }
-
-  async function logout() {
-    await supabase.auth.signOut();
-    router.replace("/client/login");
   }
 
   useEffect(() => {
@@ -240,381 +228,278 @@ export default function ClientDashboardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // When month changes, reload calendar
+  // If month changes, only refresh legacy calendar if we're still using it
   useEffect(() => {
-    if (!client?.id) return;
-    refreshCalendar(client.id, month);
+    if (!clientId) return;
+    if (integration?.google_calendar_embed_url) return;
+    if (!integration?.google_calendar_connected) return;
+    refreshCalendar(clientId, month);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [month, client?.id]);
+  }, [month]);
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-black text-white flex items-center justify-center">
-        <div className="opacity-70">Loading…</div>
+      <div className="mx-auto max-w-6xl px-6 py-12">
+        <div className="text-sm opacity-70">Loading dashboard…</div>
       </div>
     );
   }
 
   if (!meEmail) {
     return (
-      <div className="min-h-screen bg-black text-white flex items-center justify-center">
-        <div className="opacity-70">Not logged in.</div>
+      <div className="mx-auto max-w-6xl px-6 py-12">
+        <div className="text-lg font-semibold">You are not signed in.</div>
+        <div className="mt-2 text-sm opacity-70">Please sign in to view your client dashboard.</div>
+        <div className="mt-6">
+          <Button onClick={() => router.push("/client/login")}>Go to login</Button>
+        </div>
       </div>
     );
   }
 
   if (!client) {
     return (
-      <div className="min-h-screen bg-black text-white">
-        <div className="max-w-4xl mx-auto px-6 py-16">
-          <h1 className="text-3xl font-semibold">Client Dashboard</h1>
-          <p className="mt-2 opacity-70">{meEmail}</p>
-
-          <div className="mt-10 rounded-2xl border border-white/10 bg-white/5 p-6">
-            <div className="text-xl font-semibold">No Client Record Found</div>
-            <p className="mt-2 opacity-70">
-              This Google account is logged in, but it doesn’t match any client in your database
-              (clients.owner_email).
-            </p>
-            <button
-              onClick={logout}
-              className="mt-6 rounded-xl border border-white/15 bg-white/5 px-4 py-2 hover:bg-white/10"
-            >
-              Logout
-            </button>
-          </div>
+      <div className="mx-auto max-w-6xl px-6 py-12">
+        <div className="text-lg font-semibold">No client profile found for:</div>
+        <div className="mt-2 text-sm opacity-70">{meEmail}</div>
+        <div className="mt-6 text-sm opacity-70">
+          Ask TechOps to create a client row with this email, then refresh.
         </div>
       </div>
     );
   }
 
-  const addressLine = [client.address, client.city, client.state, client.zip_code]
-    .filter(Boolean)
-    .join(", ");
+  // Header stats
+  const calendarStatus = integration?.google_calendar_embed_url
+    ? "Embedded"
+    : integration?.google_calendar_connected
+    ? "Connected"
+    : "Not connected";
 
-  const calConnected = !!integration?.google_calendar_connected;
-  const retellConnected = !!integration?.retell_connected;
-
-  const selectedEvents = selectedDay ? eventsByDay.get(dayKey(selectedDay)) || [] : [];
+  const retellStatus = integration?.retell_connected ? "Connected" : "Not connected";
 
   return (
-    <div className="min-h-screen text-white bg-black">
-      {/* Background glow */}
-      <div className="pointer-events-none fixed inset-0">
-        <div className="absolute -top-40 -left-40 h-[520px] w-[520px] rounded-full bg-emerald-500/20 blur-[120px]" />
-        <div className="absolute -top-40 right-0 h-[520px] w-[520px] rounded-full bg-sky-500/20 blur-[120px]" />
-        <div className="absolute bottom-0 left-1/3 h-[520px] w-[520px] rounded-full bg-indigo-500/10 blur-[120px]" />
+    <div className="mx-auto max-w-6xl px-6 py-10">
+      {/* Header */}
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <h1 className="text-3xl font-semibold tracking-tight">
+            Client Dashboard
+          </h1>
+          <div className="mt-2 text-sm opacity-70">
+            Welcome, <span className="font-medium">{client.name || "(No name)"}</span>
+          </div>
+          <div className="mt-1 text-sm opacity-70">{client.email}</div>
+
+          <div className="mt-4 flex items-center gap-2 flex-wrap text-xs">
+            <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1">
+              Status: <span className="font-medium">{client.status || "—"}</span>
+            </span>
+            <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1">
+              Industry: <span className="font-medium">{client.industry || "—"}</span>
+            </span>
+            <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1">
+              Calendar: <span className="font-medium">{calendarStatus}</span>
+            </span>
+            <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1">
+              Retell: <span className="font-medium">{retellStatus}</span>
+            </span>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <Button variant="secondary" onClick={() => loadMeAndClient()}>
+            Refresh
+          </Button>
+          <Button onClick={() => supabase.auth.signOut().then(() => router.push("/client/login"))}>
+            Sign out
+          </Button>
+        </div>
       </div>
 
-      <div className="relative max-w-6xl mx-auto px-6 py-10">
-        {/* Header */}
-        <div className="flex items-start justify-between gap-6">
-          <div>
-            <h1 className="text-4xl font-semibold tracking-tight">Client Dashboard</h1>
-            <div className="mt-2 opacity-70">{meEmail}</div>
-          </div>
-
-          <button
-            onClick={logout}
-            className="rounded-xl border border-white/15 bg-white/5 px-4 py-2 hover:bg-white/10"
-          >
-            Logout
-          </button>
-        </div>
-
-        {/* Top cards */}
-        <div className="mt-8 grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-6 shadow-[0_0_0_1px_rgba(255,255,255,0.04)]">
-            <div className="text-lg font-semibold">Business Info</div>
-
-            <div className="mt-4 grid grid-cols-2 gap-y-2 text-sm">
-              <div className="opacity-70">Business</div>
-              <div className="text-right">{client.business_name}</div>
-
-              <div className="opacity-70">Industry</div>
-              <div className="text-right">{client.industry || "—"}</div>
-
-              <div className="opacity-70">Status</div>
-              <div className="text-right">{client.status || "—"}</div>
-
-              <div className="opacity-70">Phone</div>
-              <div className="text-right">{client.phone_number || "—"}</div>
-
-              <div className="opacity-70">Address</div>
-              <div className="text-right">{addressLine || "—"}</div>
-            </div>
-
-            <div className="mt-6 text-xs opacity-60">Client ID: {client.id}</div>
-          </div>
-
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-6 shadow-[0_0_0_1px_rgba(255,255,255,0.04)]">
-            <div className="flex items-start justify-between gap-3">
+      {/* CALENDAR FULL WIDTH */}
+      {integration?.google_calendar_embed_url ? (
+          <div className="mt-8 rounded-2xl border border-white/10 bg-white/5 p-6">
+            <div className="flex items-start justify-between gap-4 flex-wrap">
               <div>
-                <div className="text-lg font-semibold">Integrations</div>
-                <div className="mt-1 text-sm opacity-70">Connection status</div>
+                <div className="text-lg font-semibold">Calendar</div>
+                <div className="text-sm opacity-70">Live Google Calendar</div>
               </div>
 
-              <div className="flex gap-2">
-                <span
-                  className={`rounded-full px-3 py-1 text-xs border ${
-                    retellConnected
-                      ? "border-emerald-500/30 bg-emerald-500/15 text-emerald-200"
-                      : "border-white/10 bg-white/5 text-white/70"
-                  }`}
-                >
-                  Retell: {retellConnected ? "Connected" : "Not connected"}
-                </span>
-                <span
-                  className={`rounded-full px-3 py-1 text-xs border ${
-                    calConnected
-                      ? "border-emerald-500/30 bg-emerald-500/15 text-emerald-200"
-                      : "border-white/10 bg-white/5 text-white/70"
-                  }`}
-                >
-                  Calendar: {calConnected ? "Connected" : "Not connected"}
-                </span>
-              </div>
+              <a
+                href={integration.google_calendar_embed_url}
+                target="_blank"
+                rel="noreferrer"
+                className="text-sm underline opacity-80 hover:opacity-100"
+                title="Opens the embedded calendar URL in a new tab"
+              >
+                Open in new tab
+              </a>
             </div>
 
-            <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="rounded-2xl border border-white/10 bg-black/20 p-5">
-                <div className="text-base font-semibold">Retell AI</div>
-                <div className="mt-1 text-sm opacity-70">
-                  Phone: {integration?.retell_phone_number || "—"}
-                </div>
-                <div className="mt-4">
-                  <span
-                    className={`inline-flex rounded-full px-3 py-1 text-xs border ${
-                      retellConnected
-                        ? "border-emerald-500/30 bg-emerald-500/15 text-emerald-200"
-                        : "border-white/10 bg-white/5 text-white/70"
-                    }`}
-                  >
-                    {retellConnected ? "Connected" : "Not connected"}
-                  </span>
-                </div>
-              </div>
+            <div className="mt-4 rounded-2xl overflow-hidden border border-white/10 bg-black/20">
+              <iframe
+                title="Google Calendar"
+                src={integration.google_calendar_embed_url || ""}
+                className="w-full h-[720px]"
+                style={{ border: 0 }}
+                scrolling="no"
+              />
+            </div>
 
-              <div className="rounded-2xl border border-white/10 bg-black/20 p-5">
-                <div className="text-base font-semibold">Google Calendar</div>
-                <div className="mt-1 text-sm opacity-70">
-                  Calendar ID: {integration?.google_calendar_id || "—"}
-                </div>
-                <div className="mt-4">
-                  <span
-                    className={`inline-flex rounded-full px-3 py-1 text-xs border ${
-                      calConnected
-                        ? "border-emerald-500/30 bg-emerald-500/15 text-emerald-200"
-                        : "border-white/10 bg-white/5 text-white/70"
-                    }`}
-                  >
-                    {calConnected ? "Connected" : "Not connected"}
-                  </span>
-                </div>
-              </div>
+            <div className="mt-3 text-xs opacity-70">
+              If you see a permission error, the calendar owner needs to share it (or make it public) for embedding.
             </div>
           </div>
-        </div>
-
-        {/* CALENDAR FULL WIDTH */}
-        <div className="mt-8 rounded-2xl border border-white/10 bg-white/5 p-6">
-          <div className="flex items-start justify-between gap-4 flex-wrap">
-            <div>
-              <div className="text-lg font-semibold">Calendar</div>
-              <div className="text-sm opacity-70">Month view + daily details</div>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <button
-                className="rounded-xl border border-white/15 bg-white/5 px-4 py-2 hover:bg-white/10"
-                onClick={() => setMonth(addMonths(month, -1))}
-              >
-                Prev
-              </button>
-              <div className="px-3 py-2 rounded-xl border border-white/10 bg-black/20 text-sm">
-                {monthLabel}
+        ) : (
+          <div className="mt-8 rounded-2xl border border-white/10 bg-white/5 p-6">
+            <div className="flex items-start justify-between gap-4 flex-wrap">
+              <div>
+                <div className="text-lg font-semibold">Calendar</div>
+                <div className="text-sm opacity-70">Month view + events (Google Calendar)</div>
               </div>
               <button
-                className="rounded-xl border border-white/15 bg-white/5 px-4 py-2 hover:bg-white/10"
-                onClick={() => setMonth(addMonths(month, 1))}
+                onClick={() => integration?.google_calendar_connected && refreshCalendar(clientId, month)}
+                disabled={!integration?.google_calendar_connected}
+                className={`px-3 py-2 rounded-lg text-sm border ${
+                  integration?.google_calendar_connected
+                    ? "border-white/15 bg-white/10 hover:bg-white/15"
+                    : "border-white/5 bg-white/5 opacity-50 cursor-not-allowed"
+                }`}
               >
-                Next
-              </button>
-
-              <button
-                className="ml-2 rounded-xl border border-emerald-500/30 bg-emerald-500/15 px-4 py-2 hover:bg-emerald-500/20"
-                onClick={() => refreshCalendar(client.id, month)}
-                disabled={eventsLoading}
-              >
-                {eventsLoading ? "Refreshing…" : "Refresh"}
+                Refresh
               </button>
             </div>
-          </div>
 
-          {/* Calendar grid */}
-          <div className="mt-6 rounded-2xl border border-white/10 bg-black/20 overflow-hidden">
-            <div className="grid grid-cols-7 border-b border-white/10 text-xs uppercase tracking-wide opacity-70">
-              {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
-                <div key={d} className="px-4 py-3">
-                  {d}
+            <div className="mt-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {/* Left: month grid */}
+              <div className="lg:col-span-2">
+                <div className="flex items-center justify-between">
+                  <div className="font-medium">{monthLabel}</div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setMonth(addMonths(month, -1))}
+                      className="px-3 py-2 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10"
+                    >
+                      ◀
+                    </button>
+                    <button
+                      onClick={() => setMonth(addMonths(month, 1))}
+                      className="px-3 py-2 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10"
+                    >
+                      ▶
+                    </button>
+                  </div>
                 </div>
-              ))}
-            </div>
 
-            <div className="grid grid-cols-7">
-              {monthDays.map((d, idx) => {
-                const inMonth = d.getMonth() === month.getMonth();
-                const today = sameDay(d, new Date());
-                const evs = eventsByDay.get(dayKey(d)) || [];
-                const isSelected = selectedDay ? sameDay(d, selectedDay) : false;
+                <div className="mt-4 grid grid-cols-7 gap-2 text-xs opacity-70">
+                  {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
+                    <div key={d} className="px-2">{d}</div>
+                  ))}
+                </div>
 
-                return (
-                  <button
-                    key={idx}
-                    onClick={() => setSelectedDay(new Date(d))}
-                    className={[
-                      "text-left px-4 py-4 border-t border-white/5 min-h-[92px] hover:bg-white/5 transition",
-                      inMonth ? "" : "opacity-40",
-                      today ? "bg-emerald-500/10" : "",
-                      isSelected ? "outline outline-2 outline-emerald-500/40 -outline-offset-2" : "",
-                    ].join(" ")}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="text-sm font-medium">{d.getDate()}</div>
-                      {evs.length > 0 && (
-                        <div className="text-[10px] rounded-full px-2 py-0.5 border border-emerald-500/30 bg-emerald-500/10 text-emerald-200">
-                          {evs.length}
+                <div className="mt-2 grid grid-cols-7 gap-2">
+                  {days.map((day) => {
+                    const key = day.toISOString().slice(0, 10);
+                    const dayEvents = eventsByDay[key] || [];
+                    const inMonth = day.getMonth() === month.getMonth();
+                    const isToday =
+                      day.toISOString().slice(0, 10) === new Date().toISOString().slice(0, 10);
+
+                    return (
+                      <button
+                        key={key}
+                        onClick={() => setSelectedDay(day)}
+                        className={[
+                          "rounded-xl border p-2 text-left min-h-[78px] transition",
+                          inMonth ? "border-white/10 bg-white/5 hover:bg-white/10" : "border-white/5 bg-white/0 opacity-50",
+                          selectedDay?.toISOString().slice(0, 10) === key ? "ring-2 ring-white/20" : "",
+                        ].join(" ")}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="text-sm font-medium">{day.getDate()}</div>
+                          {isToday && <div className="text-[10px] px-2 py-0.5 rounded-full bg-white/10">Today</div>}
                         </div>
-                      )}
-                    </div>
+                        <div className="mt-1 space-y-1">
+                          {dayEvents.slice(0, 2).map((e) => (
+                            <div key={e.id} className="text-[11px] truncate opacity-80">
+                              • {e.summary || "Event"}
+                            </div>
+                          ))}
+                          {dayEvents.length > 2 && (
+                            <div className="text-[11px] opacity-60">+{dayEvents.length - 2} more</div>
+                          )}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
 
-                    {/* tiny preview list */}
-                    <div className="mt-2 space-y-1">
-                      {evs.slice(0, 2).map((e) => (
+              {/* Right: day agenda */}
+              <div className="lg:col-span-1">
+                <div className="font-medium">Agenda</div>
+                <div className="text-sm opacity-70">
+                  {selectedDay ? selectedDay.toDateString() : "Select a day"}
+                </div>
+
+                <div className="mt-4 space-y-3">
+                  {selectedDay ? (
+                    (eventsByDay[selectedDay.toISOString().slice(0, 10)] || []).length ? (
+                      (eventsByDay[selectedDay.toISOString().slice(0, 10)] || []).map((e) => (
                         <div
                           key={e.id}
-                          className="text-xs truncate opacity-80"
-                          title={e.summary}
+                          className="rounded-xl border border-white/10 bg-white/5 p-3"
                         >
-                          • {e.summary}
+                          <div className="font-medium">{e.summary || "Event"}</div>
+                          <div className="text-xs opacity-70 mt-1">{formatEventTime(e)}</div>
+                          {e.location && <div className="text-xs opacity-70 mt-1">{e.location}</div>}
                         </div>
-                      ))}
-                      {evs.length > 2 && (
-                        <div className="text-xs opacity-50">+ {evs.length - 2} more</div>
-                      )}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+                      ))
+                    ) : (
+                      <div className="text-sm opacity-70">No events for this day.</div>
+                    )
+                  ) : (
+                    <div className="text-sm opacity-70">Pick a day to see events.</div>
+                  )}
+                </div>
 
-          {/* Day details */}
-          <div className="mt-6 rounded-2xl border border-white/10 bg-black/20 p-5">
-            <div className="flex items-center justify-between gap-3 flex-wrap">
-              <div className="text-sm opacity-80">
-                {selectedDay ? (
-                  <>
-                    Events on{" "}
-                    <span className="font-semibold">
-                      {new Intl.DateTimeFormat(undefined, {
-                        weekday: "long",
-                        month: "long",
-                        day: "numeric",
-                        year: "numeric",
-                      }).format(selectedDay)}
-                    </span>
-                  </>
-                ) : (
-                  "Click a day to see details"
+                {!integration?.google_calendar_connected && (
+                  <div className="mt-6 text-sm opacity-70">
+                    Google Calendar is not connected yet.
+                  </div>
                 )}
               </div>
-
-              {selectedDay && (
-                <button
-                  className="rounded-xl border border-white/15 bg-white/5 px-4 py-2 hover:bg-white/10 text-sm"
-                  onClick={() => setSelectedDay(null)}
-                >
-                  Clear
-                </button>
-              )}
-            </div>
-
-            <div className="mt-4 space-y-3">
-              {selectedDay && selectedEvents.length === 0 && (
-                <div className="text-sm opacity-60">No events found for this day.</div>
-              )}
-
-              {selectedEvents.map((e) => {
-                const start = e.start.dateTime || e.start.date;
-                const end = e.end.dateTime || e.end.date;
-
-                return (
-                  <a
-                    key={e.id}
-                    href={e.htmlLink || "#"}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="block rounded-xl border border-white/10 bg-white/5 p-4 hover:bg-white/10 transition"
-                  >
-                    <div className="font-semibold">{e.summary}</div>
-                    <div className="mt-1 text-sm opacity-70">
-                      {start ? new Date(start).toLocaleString() : "—"}
-                      {end ? ` → ${new Date(end).toLocaleString()}` : ""}
-                    </div>
-                  </a>
-                );
-              })}
             </div>
           </div>
-        </div>
+        )}
 
-        {/* RETELL ANALYTICS BELOW CALENDAR */}
+        {/* RETELL ANALYTICS FULL WIDTH */}
         <div className="mt-8 rounded-2xl border border-white/10 bg-white/5 p-6">
           <div className="flex items-start justify-between gap-4 flex-wrap">
             <div>
               <div className="text-lg font-semibold">Retell Analytics</div>
-              <div className="text-sm opacity-70">Calls + performance overview</div>
+              <div className="text-sm opacity-70">Call insights + KPIs</div>
             </div>
-
-            <button
-              className="rounded-xl border border-emerald-500/30 bg-emerald-500/15 px-4 py-2 hover:bg-emerald-500/20"
-              onClick={() => refreshRetell(client.id)}
-              disabled={retellLoading}
+            <Button
+              variant="secondary"
+              onClick={() => refreshRetell(clientId)}
+              disabled={!integration?.retell_connected}
             >
-              {retellLoading ? "Refreshing…" : "Refresh"}
-            </button>
+              Refresh
+            </Button>
           </div>
 
-          <div className="mt-6 grid grid-cols-1 md:grid-cols-4 gap-4">
-            <StatCard label="Total Calls" value={retell?.totalCalls} />
-            <StatCard label="Answered" value={retell?.answered} />
-            <StatCard label="Missed" value={retell?.missed} />
-            <StatCard
-              label="Avg Duration"
-              value={
-                typeof retell?.avgDurationSec === "number"
-                  ? `${Math.round(retell.avgDurationSec)}s`
-                  : undefined
-              }
-            />
-          </div>
-
-          <div className="mt-4 text-xs opacity-60">
-            Last sync: {retell?.lastSyncAt ? new Date(retell.lastSyncAt).toLocaleString() : "—"}
-          </div>
+          {!integration?.retell_connected ? (
+            <div className="mt-6 text-sm opacity-70">Retell is not connected yet.</div>
+          ) : (
+            <div className="mt-6">
+              <pre className="text-xs rounded-xl border border-white/10 bg-black/20 p-4 overflow-auto">
+                {retellStats ? JSON.stringify(retellStats, null, 2) : "No data yet."}
+              </pre>
+            </div>
+          )}
         </div>
-      </div>
-    </div>
-  );
-}
-
-function StatCard({ label, value }: { label: string; value?: any }) {
-  const display = value === 0 ? "0" : value ? String(value) : "—";
-  return (
-    <div className="rounded-2xl border border-white/10 bg-black/20 p-5">
-      <div className="text-sm opacity-70">{label}</div>
-      <div className="mt-2 text-2xl font-semibold">{display}</div>
     </div>
   );
 }
