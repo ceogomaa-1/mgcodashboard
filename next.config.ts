@@ -1,6 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Silences the turbopack warning
+  turbopack: {},
+
   webpack: (config) => {
     config.watchOptions = {
       poll: 3000,
