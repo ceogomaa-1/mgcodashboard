@@ -8,9 +8,9 @@ function jsonErr(msg: string, status = 400) {
 
 export async function GET(
   _req: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
-  const clientId = params?.id;
+  const { id: clientId } = await params;
   if (!clientId) return jsonErr("Missing client id");
 
   const { data, error } = await supabaseAdmin
@@ -31,9 +31,9 @@ export async function GET(
  */
 export async function POST(
   req: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
-  const clientId = params?.id;
+  const { id: clientId } = await params;
   if (!clientId) return jsonErr("Missing client id");
 
   let body: any = {};
@@ -96,4 +96,13 @@ export async function POST(
   }
 
   return NextResponse.json({ ok: true }, { status: 200 });
+}
+
+// Some parts of the app call this endpoint with PATCH.
+// Keep PATCH as an alias to POST so the UI doesn't break.
+export async function PATCH(
+  req: Request,
+  ctx: { params: Promise<{ id: string }> }
+) {
+  return POST(req, ctx);
 }

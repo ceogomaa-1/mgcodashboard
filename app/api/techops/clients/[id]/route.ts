@@ -8,9 +8,9 @@ function bad(msg: string, status = 400) {
 
 export async function DELETE(
   _req: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
-  const clientId = params?.id;
+  const { id: clientId } = await params;
 
   if (!clientId || clientId === "undefined" || clientId === "null") {
     return bad("Missing client id (uuid). Refusing to delete.");
