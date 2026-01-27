@@ -66,11 +66,7 @@ function SecretRow({
           onClick={onToggle}
           className="border-white/15 bg-transparent"
         >
-          {reveal ? (
-            <EyeOff className="h-4 w-4" />
-          ) : (
-            <Eye className="h-4 w-4" />
-          )}
+          {reveal ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
         </Button>
       </div>
     </div>
@@ -86,7 +82,7 @@ export default function TechOpsClientDetails() {
   const [loading, setLoading] = useState(true);
   const [client, setClient] = useState<any>(null);
 
-  // NEW: TechOps credentials modal + state
+  // TechOps credentials modal + state
   const [showCredsModal, setShowCredsModal] = useState(false);
   const [savingCreds, setSavingCreds] = useState(false);
   const [credsMsg, setCredsMsg] = useState<string | null>(null);
@@ -132,7 +128,7 @@ export default function TechOpsClientDetails() {
     fetchClient();
   }, [clientId, router, supabase]);
 
-  // When client loads, prefill creds (so you can see what’s saved)
+  // Prefill creds from integrations row
   useEffect(() => {
     if (!integration) return;
 
@@ -146,6 +142,16 @@ export default function TechOpsClientDetails() {
     });
   }, [integration]);
 
+  const refreshClient = async () => {
+    const { data, error } = await supabase
+      .from("clients")
+      .select("*, integrations(*)")
+      .eq("id", clientId)
+      .single();
+
+    if (!error) setClient(normalizeClient(data));
+  };
+
   const saveCredentials = async () => {
     setSavingCreds(true);
     setCredsMsg(null);
@@ -158,21 +164,14 @@ export default function TechOpsClientDetails() {
       });
 
       const json = await res.json();
+
       if (!res.ok || !json?.ok) {
         setCredsMsg(json?.error || "Failed to save.");
         setSavingCreds(false);
         return;
       }
 
-      // Refresh client data to reflect stored creds
-      const { data, error } = await supabase
-        .from("clients")
-        .select("*, integrations(*)")
-        .eq("id", clientId)
-        .single();
-
-      if (!error) setClient(normalizeClient(data));
-
+      await refreshClient();
       setCredsMsg("Saved ✅");
       setSavingCreds(false);
     } catch (e: any) {
@@ -225,7 +224,7 @@ export default function TechOpsClientDetails() {
                   {client.business_name || "Client"}
                 </h1>
                 <Badge className={statusActive ? "bg-emerald-600" : "bg-zinc-700"}>
-                  {statusActive ? "ACTIVE" : (client.status || "UNKNOWN")}
+                  {statusActive ? "ACTIVE" : client.status || "UNKNOWN"}
                 </Badge>
               </div>
               <div className="text-white/60 text-sm">{client.email || "—"}</div>
@@ -318,7 +317,9 @@ export default function TechOpsClientDetails() {
                     <Calendar className="h-5 w-5 text-emerald-400" />
                     Google Calendar
                   </div>
-                  <Badge className={integration?.google_calendar_id ? "bg-emerald-600" : "bg-zinc-700"}>
+                  <Badge
+                    className={integration?.google_calendar_id ? "bg-emerald-600" : "bg-zinc-700"}
+                  >
                     {integration?.google_calendar_id ? (
                       <span className="flex items-center gap-1">
                         <CheckCircle className="h-4 w-4" /> Connected
@@ -350,7 +351,7 @@ export default function TechOpsClientDetails() {
           </div>
         </div>
 
-        {/* NEW: TechOps-only Credentials */}
+        {/* ✅ NEW: TechOps Credentials section (THIS is what you want to see) */}
         <Card className="bg-white/5 border-white/10">
           <CardHeader>
             <CardTitle className="flex items-center justify-between">
@@ -389,7 +390,7 @@ export default function TechOpsClientDetails() {
             <div className="rounded-xl border border-white/10 bg-white/5 p-4">
               <div className="flex items-center gap-2 font-medium">
                 <Wand2 className="h-4 w-4 text-emerald-400" />
-                Automation Tools (n8n/Make/Zapier)
+                Automation Tools
               </div>
               <div className="mt-2 text-sm text-white/60">
                 Email: {integration?.automation_tools_email || "—"}
@@ -437,34 +438,48 @@ export default function TechOpsClientDetails() {
                     className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm outline-none"
                     placeholder="Retell email"
                     value={creds.retell_account_email}
-                    onChange={(e) => setCreds((p) => ({ ...p, retell_account_email: e.target.value }))}
+                    onChange={(e) =>
+                      setCreds((p) => ({ ...p, retell_account_email: e.target.value }))
+                    }
                   />
+
                   <SecretRow
                     label="Password"
                     value={creds.retell_account_password}
                     reveal={reveal.retell_account_password}
                     onToggle={() =>
-                      setReveal((p) => ({ ...p, retell_account_password: !p.retell_account_password }))
+                      setReveal((p) => ({
+                        ...p,
+                        retell_account_password: !p.retell_account_password,
+                      }))
                     }
                   />
+
                   <input
                     className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm outline-none"
                     placeholder="Retell password"
                     type={reveal.retell_account_password ? "text" : "password"}
                     value={creds.retell_account_password}
-                    onChange={(e) => setCreds((p) => ({ ...p, retell_account_password: e.target.value }))}
+                    onChange={(e) =>
+                      setCreds((p) => ({ ...p, retell_account_password: e.target.value }))
+                    }
                   />
                 </div>
 
                 {/* Automation */}
                 <div className="space-y-2">
-                  <div className="text-sm font-medium text-white/80">Automation tools (n8n/Make/Zapier)</div>
+                  <div className="text-sm font-medium text-white/80">
+                    Automation tools (n8n/Make/Zapier)
+                  </div>
                   <input
                     className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm outline-none"
                     placeholder="Automation tools email"
                     value={creds.automation_tools_email}
-                    onChange={(e) => setCreds((p) => ({ ...p, automation_tools_email: e.target.value }))}
+                    onChange={(e) =>
+                      setCreds((p) => ({ ...p, automation_tools_email: e.target.value }))
+                    }
                   />
+
                   <SecretRow
                     label="Password"
                     value={creds.automation_tools_password}
@@ -476,6 +491,7 @@ export default function TechOpsClientDetails() {
                       }))
                     }
                   />
+
                   <input
                     className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm outline-none"
                     placeholder="Automation tools password"
@@ -498,6 +514,7 @@ export default function TechOpsClientDetails() {
                       setCreds((p) => ({ ...p, google_credentials_email: e.target.value }))
                     }
                   />
+
                   <SecretRow
                     label="Password"
                     value={creds.google_credentials_password}
@@ -509,6 +526,7 @@ export default function TechOpsClientDetails() {
                       }))
                     }
                   />
+
                   <input
                     className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm outline-none"
                     placeholder="Google password"
