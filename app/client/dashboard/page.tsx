@@ -321,6 +321,11 @@ export default function ClientDashboardPage() {
             <Button variant="secondary" onClick={loadMeAndClient}>
               Refresh
             </Button>
+            {client?.industry === "Real Estate" ? (
+              <Button variant="secondary" onClick={() => router.push("/client/listings")}>
+                Upload New Listing
+              </Button>
+            ) : null}
             <Button
               onClick={() => supabase.auth.signOut().then(() => router.push("/client/login"))}
             >
