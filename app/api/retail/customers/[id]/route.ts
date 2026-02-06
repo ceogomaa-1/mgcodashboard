@@ -7,13 +7,16 @@ function safeString(value: any) {
   return value.trim();
 }
 
-export async function GET(_: Request, { params }: { params: { id: string } }) {
+export async function GET(
+  _: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
   const guard = await requireRetailClient();
   if ("error" in guard) {
     return NextResponse.json({ error: guard.error }, { status: guard.status });
   }
 
-  const customerId = params.id;
+  const { id: customerId } = await params;
   const { data: customer, error } = await supabaseAdmin
     .from("retail_customers")
     .select("id,full_name,phone,email,notes,status,created_at,updated_at")
@@ -38,13 +41,16 @@ export async function GET(_: Request, { params }: { params: { id: string } }) {
   return NextResponse.json({ customer, transactions: transactions || [] }, { status: 200 });
 }
 
-export async function PATCH(req: Request, { params }: { params: { id: string } }) {
+export async function PATCH(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
   const guard = await requireRetailClient();
   if ("error" in guard) {
     return NextResponse.json({ error: guard.error }, { status: guard.status });
   }
 
-  const customerId = params.id;
+  const { id: customerId } = await params;
   const body = await req.json().catch(() => ({}));
 
   const patch: Record<string, any> = {
@@ -72,13 +78,16 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
   return NextResponse.json({ customer: data }, { status: 200 });
 }
 
-export async function DELETE(_: Request, { params }: { params: { id: string } }) {
+export async function DELETE(
+  _: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
   const guard = await requireRetailClient();
   if ("error" in guard) {
     return NextResponse.json({ error: guard.error }, { status: guard.status });
   }
 
-  const customerId = params.id;
+  const { id: customerId } = await params;
   const { error } = await supabaseAdmin
     .from("retail_customers")
     .delete()

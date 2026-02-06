@@ -2,13 +2,16 @@ import { NextResponse } from "next/server";
 import { requireRetailClient } from "@/lib/retail/guard";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 
-export async function GET(_: Request, { params }: { params: { id: string } }) {
+export async function GET(
+  _: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
   const guard = await requireRetailClient();
   if ("error" in guard) {
     return NextResponse.json({ error: guard.error }, { status: guard.status });
   }
 
-  const txId = params.id;
+  const { id: txId } = await params;
 
   const { data: transaction, error } = await supabaseAdmin
     .from("retail_transactions")
