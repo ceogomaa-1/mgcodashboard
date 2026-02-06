@@ -1,5 +1,33 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
+## Retail Ledger (MVP)
+
+The Retail Ledger module is available only for clients whose `clients.industry` is set to `Retail` (case-insensitive). Non-retail clients will not see it in navigation and are redirected away from `/dashboard/retail-ledger`.
+
+### Data rules
+- Money is stored in integer cents.
+- Balance rules:
+  - Sales increase what a customer owes (positive `balance_change_cents`).
+  - Payments decrease what a customer owes (negative `balance_change_cents`).
+  - Refunds reduce what a customer owes (negative `balance_change_cents`).
+- `total_cents` is positive for sales and negative for payments/refunds.
+- Tax is simplified to a single GST/HST-like rate per province (PST/QST complexity is intentionally ignored for MVP).
+
+### Province defaults
+The default tax rate comes from `retail_business_settings.province_code`:
+- ON 13% (1300 bps), NB/NL/NS/PE 15% (1500 bps), all others 5% (500 bps).
+
+On first use, settings are created automatically using the client’s `state` field as the province code. If missing, it defaults to `ON`.
+
+### Receipts and numbering
+Each transaction stores `receipt_prefix` + `receipt_number` for reproducible receipts. The prefix and next number live in `retail_business_settings`.
+
+### SQL
+See `supabase/retail_ledger.sql` for tables:
+- `retail_customers`
+- `retail_transactions`
+- `retail_business_settings`
+
 ## Getting Started
 
 First, run the development server:

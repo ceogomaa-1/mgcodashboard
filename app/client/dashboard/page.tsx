@@ -274,6 +274,7 @@ export default function ClientDashboardPage() {
     : "Not connected";
 
   const retellStatus = integration?.retell_connected ? "Connected" : "Not connected";
+  const isRetailClient = (client?.industry || "").trim().toLowerCase() === "retail";
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-black via-black to-emerald-950/60 text-white">
@@ -324,6 +325,11 @@ export default function ClientDashboardPage() {
             {client?.industry === "Real Estate" ? (
               <Button variant="secondary" onClick={() => router.push("/client/listings")}>
                 Upload New Listing
+              </Button>
+            ) : null}
+            {isRetailClient ? (
+              <Button variant="secondary" onClick={() => router.push("/dashboard/retail-ledger")}>
+                Retail Ledger
               </Button>
             ) : null}
             <Button
