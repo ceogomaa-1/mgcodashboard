@@ -13,6 +13,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Plus } from "lucide-react";
 
 type RetailClient = {
   id: string;
@@ -37,7 +38,7 @@ type RetailCustomer = {
   email: string | null;
   notes: string | null;
   status: string;
-  balance_cents?: number;
+  balance_after?: number;
   last_activity?: string | null;
 };
 
@@ -45,22 +46,16 @@ type RetailTransaction = {
   id: string;
   customer_id: string;
   type: "sale" | "payment" | "refund";
+  subtotal: number | null;
+  discount_amount: number | null;
+  tax_rate: number | null;
+  tax_amount: number | null;
+  total: number;
+  amount: number | null;
+  balance_after: number | null;
+  province: string | null;
+  memo: string | null;
   occurred_at: string;
-  reference: string | null;
-  method: string | null;
-  subtotal_cents: number | null;
-  discount_type: string | null;
-  discount_value: number | null;
-  tax_enabled: boolean | null;
-  tax_rate_bps: number | null;
-  tax_cents: number | null;
-  total_cents: number;
-  amount_paid_cents: number | null;
-  payment_cents: number | null;
-  refund_cents: number | null;
-  balance_change_cents: number;
-  receipt_prefix?: string | null;
-  receipt_number?: number | null;
   retail_customers?: { full_name?: string | null } | null;
 };
 
@@ -123,6 +118,22 @@ function parseCents(value: string) {
   return Math.round(parsed * 100);
 }
 
+function computeDiscountAmount(
+  subtotalCents: number,
+  discountType: string,
+  discountValueRaw: string
+) {
+  const value = Number(discountValueRaw || 0);
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  if (discountType === "percent") {
+    return Math.round((subtotalCents * Math.min(100, value)) / 100);
+  }
+  if (discountType === "fixed") {
+    return Math.max(0, Math.round(value * 100));
+  }
+  return 0;
+}
+
 function formatDateTime(value: string) {
   try {
     return new Date(value).toLocaleString();
@@ -159,7 +170,6 @@ export default function RetailLedgerClient({ client }: { client: RetailClient })
 
   const [txType, setTxType] = useState("all");
   const [txCustomer, setTxCustomer] = useState("all");
-  const [txMethod, setTxMethod] = useState("all");
 
   const [showCustomerModal, setShowCustomerModal] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<RetailCustomer | null>(null);
@@ -179,8 +189,7 @@ export default function RetailLedgerClient({ client }: { client: RetailClient })
     type: "sale",
     customer_id: "",
     occurred_at: toDateTimeInput(new Date()),
-    method: "",
-    reference: "",
+    memo: "",
     subtotal: "",
     discount_type: "none",
     discount_value: "",
@@ -189,6 +198,13 @@ export default function RetailLedgerClient({ client }: { client: RetailClient })
     amount_paid: "",
     payment_amount: "",
     refund_amount: "",
+  });
+
+  const [showQuickCustomerModal, setShowQuickCustomerModal] = useState(false);
+  const [quickCustomerId, setQuickCustomerId] = useState("");
+  const [quickCustomerForm, setQuickCustomerForm] = useState({
+    full_name: "",
+    phone: "",
   });
 
   const currency = settings?.currency_code || "CAD";
@@ -246,7 +262,6 @@ export default function RetailLedgerClient({ client }: { client: RetailClient })
       url.searchParams.set("end", end);
       if (txType !== "all") url.searchParams.set("type", txType);
       if (txCustomer !== "all") url.searchParams.set("customer_id", txCustomer);
-      if (txMethod !== "all") url.searchParams.set("method", txMethod);
 
       const res = await fetch(url.toString(), { cache: "no-store" });
       if (!res.ok) {
@@ -336,7 +351,7 @@ export default function RetailLedgerClient({ client }: { client: RetailClient })
     if (activeTab === "reports") loadReports();
     if (activeTab === "customers") loadCustomers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, rangeStart, rangeEnd, txType, txCustomer, txMethod, customerSearch, customerStatus]);
+  }, [activeTab, rangeStart, rangeEnd, txType, txCustomer, customerSearch, customerStatus]);
 
   function openCustomerModal(customer?: RetailCustomer) {
     if (customer) {
@@ -389,8 +404,7 @@ export default function RetailLedgerClient({ client }: { client: RetailClient })
       type,
       customer_id: customerId || prev.customer_id || "",
       occurred_at: toDateTimeInput(new Date()),
-      method: "",
-      reference: "",
+      memo: "",
       subtotal: "",
       discount_type: "none",
       discount_value: "",
@@ -405,30 +419,37 @@ export default function RetailLedgerClient({ client }: { client: RetailClient })
 
   async function createTransaction() {
     try {
+      if (!txForm.customer_id) {
+        setErrorBanner("Please select a customer.");
+        return;
+      }
       const payload: any = {
         type: txForm.type,
         customer_id: txForm.customer_id,
         occurred_at: new Date(txForm.occurred_at).toISOString(),
-        method: txForm.method || null,
-        reference: txForm.reference || null,
+        memo: txForm.memo || null,
+        province: settings?.province_code || null,
       };
 
       if (txForm.type === "sale") {
-        payload.subtotal_cents = parseCents(txForm.subtotal);
-        payload.discount_type = txForm.discount_type;
-        payload.discount_value =
-          txForm.discount_type === "none" ? null : Number(txForm.discount_value || 0);
-        payload.tax_enabled = txForm.tax_enabled;
-        payload.tax_rate_bps = txForm.tax_rate_bps ? Number(txForm.tax_rate_bps) : undefined;
-        payload.amount_paid_cents = parseCents(txForm.amount_paid);
+        const subtotalCents = parseCents(txForm.subtotal);
+        payload.subtotal = subtotalCents;
+        payload.discount_amount = computeDiscountAmount(
+          subtotalCents,
+          txForm.discount_type,
+          txForm.discount_value
+        );
+        const bps = Number(txForm.tax_rate_bps || 0);
+        payload.tax_rate = txForm.tax_enabled ? bps / 100 : 0;
+        payload.amount = parseCents(txForm.amount_paid);
       }
 
       if (txForm.type === "payment") {
-        payload.payment_cents = parseCents(txForm.payment_amount);
+        payload.amount = parseCents(txForm.payment_amount);
       }
 
       if (txForm.type === "refund") {
-        payload.refund_cents = parseCents(txForm.refund_amount);
+        payload.amount = parseCents(txForm.refund_amount);
       }
 
       const res = await fetch("/api/retail/transactions", {
@@ -467,6 +488,48 @@ export default function RetailLedgerClient({ client }: { client: RetailClient })
     }
   }
 
+  function openQuickCustomerModal() {
+    const id =
+      typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? crypto.randomUUID().slice(0, 8).toUpperCase()
+        : Math.random().toString(36).slice(2, 10).toUpperCase();
+    setQuickCustomerId(id);
+    setQuickCustomerForm({ full_name: "", phone: "" });
+    setShowQuickCustomerModal(true);
+  }
+
+  async function saveQuickCustomer() {
+    try {
+      if (!quickCustomerForm.full_name.trim()) {
+        setErrorBanner("Customer name is required.");
+        return;
+      }
+      const res = await fetch("/api/retail/customers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          full_name: quickCustomerForm.full_name.trim(),
+          phone: quickCustomerForm.phone.trim(),
+          notes: `Customer ID: ${quickCustomerId}`,
+          status: "active",
+        }),
+      });
+
+      if (!res.ok) {
+        setErrorBanner(await res.text());
+        return;
+      }
+
+      const json = await res.json();
+      const newCustomer = json.customer;
+      await loadCustomers();
+      setTxForm((prev) => ({ ...prev, customer_id: newCustomer?.id || prev.customer_id }));
+      setShowQuickCustomerModal(false);
+    } catch (err: any) {
+      setErrorBanner(err?.message || "Failed to create customer.");
+    }
+  }
+
   function downloadCsv() {
     const { start, end } = rangeToIso();
     const url = new URL("/api/retail/export/csv", window.location.origin);
@@ -474,7 +537,6 @@ export default function RetailLedgerClient({ client }: { client: RetailClient })
     url.searchParams.set("end", end);
     if (txType !== "all") url.searchParams.set("type", txType);
     if (txCustomer !== "all") url.searchParams.set("customer_id", txCustomer);
-    if (txMethod !== "all") url.searchParams.set("method", txMethod);
     window.open(url.toString(), "_blank");
   }
 
@@ -644,7 +706,7 @@ export default function RetailLedgerClient({ client }: { client: RetailClient })
                           <div className="text-xs opacity-70 mt-1">{formatDateTime(tx.occurred_at)}</div>
                         </div>
                         <div className="text-sm font-semibold">
-                          {toMoney(tx.total_cents || 0, currency)}
+                          {toMoney(tx.total || 0, currency)}
                         </div>
                       </div>
                     ))
@@ -779,7 +841,7 @@ export default function RetailLedgerClient({ client }: { client: RetailClient })
                       <td className="py-3 pr-3">{c.phone || "—"}</td>
                       <td className="py-3 pr-3">{c.email || "—"}</td>
                       <td className="py-3 pr-3">
-                        {toMoney(c.balance_cents || 0, currency)}
+                        {toMoney(c.balance_after || 0, currency)}
                       </td>
                       <td className="py-3 pr-3">
                         {c.last_activity ? formatDateTime(c.last_activity) : "—"}
@@ -822,7 +884,7 @@ export default function RetailLedgerClient({ client }: { client: RetailClient })
                   <div>
                     <div className="text-lg font-semibold">{selectedCustomer.full_name}</div>
                     <div className="text-sm opacity-70">
-                      Balance: {toMoney(selectedCustomer.balance_cents || 0, currency)}
+                      Balance: {toMoney(selectedCustomer.balance_after || 0, currency)}
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
@@ -846,7 +908,7 @@ export default function RetailLedgerClient({ client }: { client: RetailClient })
                       <div key={tx.id} className="rounded-xl border border-white/10 bg-black/30 p-4">
                         <div className="flex items-start justify-between">
                           <div className="font-medium capitalize">{tx.type}</div>
-                          <div className="text-sm font-semibold">{toMoney(tx.total_cents, currency)}</div>
+                          <div className="text-sm font-semibold">{toMoney(tx.total, currency)}</div>
                         </div>
                         <div className="text-xs opacity-70 mt-1">{formatDateTime(tx.occurred_at)}</div>
                       </div>
@@ -901,24 +963,6 @@ export default function RetailLedgerClient({ client }: { client: RetailClient })
                   </SelectContent>
                 </Select>
               </div>
-              <div>
-                <Label className="text-xs opacity-70">Method</Label>
-                <Select value={txMethod} onValueChange={setTxMethod}>
-                  <SelectTrigger className="mt-1 bg-black/30 border-white/10 text-white">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent className="bg-black border-white/10">
-                    <SelectItem value="all" className="text-white">
-                      All
-                    </SelectItem>
-                    {["cash", "debit", "credit", "e-transfer", "other"].map((m) => (
-                      <SelectItem key={m} value={m} className="text-white">
-                        {m}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
               <div className="ml-auto flex items-center gap-2">
                 <Button variant="secondary" onClick={loadTransactions} disabled={loadingTransactions}>
                   {loadingTransactions ? "Loading..." : "Refresh"}
@@ -937,7 +981,7 @@ export default function RetailLedgerClient({ client }: { client: RetailClient })
                     <th className="py-2 pr-3">Date</th>
                     <th className="py-2 pr-3">Type</th>
                     <th className="py-2 pr-3">Customer</th>
-                    <th className="py-2 pr-3">Method</th>
+                    <th className="py-2 pr-3">Memo</th>
                     <th className="py-2 pr-3">Total</th>
                     <th className="py-2 pr-3">Balance Change</th>
                     <th className="py-2 pr-3">Actions</th>
@@ -949,9 +993,16 @@ export default function RetailLedgerClient({ client }: { client: RetailClient })
                       <td className="py-3 pr-3">{formatDateTime(tx.occurred_at)}</td>
                       <td className="py-3 pr-3 capitalize">{tx.type}</td>
                       <td className="py-3 pr-3">{tx.retail_customers?.full_name || "—"}</td>
-                      <td className="py-3 pr-3">{tx.method || "—"}</td>
-                      <td className="py-3 pr-3">{toMoney(tx.total_cents, currency)}</td>
-                      <td className="py-3 pr-3">{toMoney(tx.balance_change_cents, currency)}</td>
+                      <td className="py-3 pr-3">{tx.memo || "—"}</td>
+                      <td className="py-3 pr-3">{toMoney(tx.total, currency)}</td>
+                      <td className="py-3 pr-3">
+                        {toMoney(
+                          tx.type === "sale"
+                            ? (tx.total || 0) - (tx.amount || 0)
+                            : -(tx.amount || 0),
+                          currency
+                        )}
+                      </td>
                       <td className="py-3 pr-3">
                         <div className="flex items-center gap-2">
                           <button
@@ -1106,6 +1157,43 @@ export default function RetailLedgerClient({ client }: { client: RetailClient })
         </div>
       ) : null}
 
+      {showQuickCustomerModal ? (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="w-full max-w-md max-h-[90vh] overflow-y-auto rounded-2xl border border-white/10 bg-slate-900 p-6">
+            <div className="text-lg font-semibold">New Customer</div>
+            <div className="mt-2 text-xs opacity-70">Customer ID: {quickCustomerId}</div>
+            <div className="mt-4 space-y-4">
+              <div>
+                <Label>Name</Label>
+                <Input
+                  value={quickCustomerForm.full_name}
+                  onChange={(e) =>
+                    setQuickCustomerForm({ ...quickCustomerForm, full_name: e.target.value })
+                  }
+                  className="mt-1 bg-black/30 border-white/10 text-white"
+                />
+              </div>
+              <div>
+                <Label>Phone</Label>
+                <Input
+                  value={quickCustomerForm.phone}
+                  onChange={(e) =>
+                    setQuickCustomerForm({ ...quickCustomerForm, phone: e.target.value })
+                  }
+                  className="mt-1 bg-black/30 border-white/10 text-white"
+                />
+              </div>
+            </div>
+            <div className="mt-6 flex items-center justify-end gap-2">
+              <Button variant="secondary" onClick={() => setShowQuickCustomerModal(false)}>
+                Cancel
+              </Button>
+              <Button onClick={saveQuickCustomer}>Save</Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {showTxModal ? (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
           <div className="w-full max-w-xl max-h-[90vh] overflow-y-auto rounded-2xl border border-white/10 bg-slate-900 p-6">
@@ -1134,7 +1222,17 @@ export default function RetailLedgerClient({ client }: { client: RetailClient })
                 </Select>
               </div>
               <div>
-                <Label>Customer</Label>
+                <div className="flex items-center justify-between">
+                  <Label>Customer</Label>
+                  <button
+                    type="button"
+                    onClick={openQuickCustomerModal}
+                    className="inline-flex items-center gap-1 text-xs text-emerald-200 hover:text-emerald-100"
+                  >
+                    <Plus className="h-3 w-3" />
+                    New
+                  </button>
+                </div>
                 <Select
                   value={txForm.customer_id}
                   onValueChange={(value) => setTxForm({ ...txForm, customer_id: value })}
@@ -1161,21 +1259,12 @@ export default function RetailLedgerClient({ client }: { client: RetailClient })
                 />
               </div>
               <div>
-                <Label>Method</Label>
+                <Label>Memo</Label>
                 <Input
-                  value={txForm.method}
-                  onChange={(e) => setTxForm({ ...txForm, method: e.target.value })}
+                  value={txForm.memo}
+                  onChange={(e) => setTxForm({ ...txForm, memo: e.target.value })}
                   className="mt-1 bg-black/30 border-white/10 text-white"
-                  placeholder="cash / debit / credit / e-transfer"
-                />
-              </div>
-              <div>
-                <Label>Reference</Label>
-                <Input
-                  value={txForm.reference}
-                  onChange={(e) => setTxForm({ ...txForm, reference: e.target.value })}
-                  className="mt-1 bg-black/30 border-white/10 text-white"
-                  placeholder="Receipt # or note"
+                  placeholder="Optional note"
                 />
               </div>
 
