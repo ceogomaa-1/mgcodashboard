@@ -1038,8 +1038,8 @@ export default function RetailLedgerClient({ client }: { client: RetailClient })
       </div>
 
       {showCustomerModal ? (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
-          <div className="w-full max-w-lg rounded-2xl border border-white/10 bg-slate-900 p-6">
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-2xl border border-white/10 bg-slate-900 p-6">
             <div className="text-lg font-semibold">
               {editingCustomer ? "Edit Customer" : "Add Customer"}
             </div>
@@ -1107,8 +1107,8 @@ export default function RetailLedgerClient({ client }: { client: RetailClient })
       ) : null}
 
       {showTxModal ? (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
-          <div className="w-full max-w-xl rounded-2xl border border-white/10 bg-slate-900 p-6">
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="w-full max-w-xl max-h-[90vh] overflow-y-auto rounded-2xl border border-white/10 bg-slate-900 p-6">
             <div className="text-lg font-semibold">New Transaction</div>
             <div className="mt-4 space-y-4">
               <div>
