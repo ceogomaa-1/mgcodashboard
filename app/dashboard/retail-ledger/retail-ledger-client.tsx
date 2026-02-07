@@ -185,6 +185,8 @@ export default function RetailLedgerClient({ client }: { client: RetailClient })
   const [customerDetailTx, setCustomerDetailTx] = useState<RetailTransaction[]>([]);
 
   const [showTxModal, setShowTxModal] = useState(false);
+  const [txSubmitting, setTxSubmitting] = useState(false);
+  const [txError, setTxError] = useState<string | null>(null);
   const [txForm, setTxForm] = useState({
     type: "sale",
     customer_id: "",
@@ -399,6 +401,7 @@ export default function RetailLedgerClient({ client }: { client: RetailClient })
   }
 
   function openTxModal(type: "sale" | "payment" | "refund", customerId?: string) {
+    setTxError(null);
     setTxForm((prev) => ({
       ...prev,
       type,
@@ -419,8 +422,12 @@ export default function RetailLedgerClient({ client }: { client: RetailClient })
 
   async function createTransaction() {
     try {
+      if (txSubmitting) return;
+      setTxSubmitting(true);
+      setTxError(null);
       if (!txForm.customer_id) {
-        setErrorBanner("Please select a customer.");
+        setTxError("Please select a customer.");
+        setTxSubmitting(false);
         return;
       }
       const payload: any = {
@@ -434,7 +441,8 @@ export default function RetailLedgerClient({ client }: { client: RetailClient })
       if (txForm.type === "sale") {
         const subtotalCents = parseCents(txForm.subtotal);
         if (subtotalCents <= 0) {
-          setErrorBanner("Subtotal must be greater than 0.");
+          setTxError("Subtotal must be greater than 0.");
+          setTxSubmitting(false);
           return;
         }
         payload.subtotal = subtotalCents;
@@ -451,7 +459,8 @@ export default function RetailLedgerClient({ client }: { client: RetailClient })
       if (txForm.type === "payment") {
         const amount = parseCents(txForm.payment_amount);
         if (amount <= 0) {
-          setErrorBanner("Payment amount must be greater than 0.");
+          setTxError("Payment amount must be greater than 0.");
+          setTxSubmitting(false);
           return;
         }
         payload.amount = amount;
@@ -460,7 +469,8 @@ export default function RetailLedgerClient({ client }: { client: RetailClient })
       if (txForm.type === "refund") {
         const amount = parseCents(txForm.refund_amount);
         if (amount <= 0) {
-          setErrorBanner("Refund amount must be greater than 0.");
+          setTxError("Refund amount must be greater than 0.");
+          setTxSubmitting(false);
           return;
         }
         payload.amount = amount;
@@ -473,14 +483,18 @@ export default function RetailLedgerClient({ client }: { client: RetailClient })
       });
 
       if (!res.ok) {
-        setErrorBanner(await res.text());
+        const text = await res.text();
+        setTxError(text || "Failed to save transaction.");
+        setTxSubmitting(false);
         return;
       }
 
       setShowTxModal(false);
       await Promise.all([loadOverview(), loadTransactions(), loadCustomers()]);
+      setTxSubmitting(false);
     } catch (err: any) {
-      setErrorBanner(err?.message || "Failed to create transaction.");
+      setTxError(err?.message || "Failed to create transaction.");
+      setTxSubmitting(false);
     }
   }
 
@@ -1212,6 +1226,11 @@ export default function RetailLedgerClient({ client }: { client: RetailClient })
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
           <div className="w-full max-w-xl max-h-[90vh] overflow-y-auto rounded-2xl border border-white/10 bg-slate-900 p-6">
             <div className="text-lg font-semibold">New Transaction</div>
+            {txError ? (
+              <div className="mt-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
+                {txError}
+              </div>
+            ) : null}
             <div className="mt-4 space-y-4">
               <div>
                 <Label>Type</Label>
@@ -1384,7 +1403,9 @@ export default function RetailLedgerClient({ client }: { client: RetailClient })
               <Button variant="secondary" onClick={() => setShowTxModal(false)}>
                 Cancel
               </Button>
-              <Button onClick={createTransaction}>Save</Button>
+              <Button onClick={createTransaction} disabled={txSubmitting}>
+                {txSubmitting ? "Saving..." : "Save"}
+              </Button>
             </div>
           </div>
         </div>
