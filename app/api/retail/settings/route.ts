@@ -1,10 +1,10 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { requireRetailClient } from "@/lib/retail/guard";
 import { ensureRetailSettings } from "@/lib/retail/settings";
 import { getProvinceTaxBps, normalizeProvinceCode } from "@/lib/retail/tax";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 
-export async function GET() {
+export async function GET(_req: NextRequest) {
   const guard = await requireRetailClient();
   if ("error" in guard) {
     return NextResponse.json({ error: guard.error }, { status: guard.status });
@@ -18,7 +18,7 @@ export async function GET() {
   return NextResponse.json({ settings: settingsRes.settings }, { status: 200 });
 }
 
-export async function PATCH(req: Request) {
+export async function PATCH(req: NextRequest) {
   const guard = await requireRetailClient();
   if ("error" in guard) {
     return NextResponse.json({ error: guard.error }, { status: guard.status });

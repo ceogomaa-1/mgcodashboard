@@ -1,8 +1,8 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { requireRetailClient } from "@/lib/retail/guard";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 
-export async function GET(req: Request) {
+export async function GET(req: NextRequest) {
   const guard = await requireRetailClient();
   if ("error" in guard) {
     return NextResponse.json({ error: guard.error }, { status: guard.status });
@@ -15,7 +15,7 @@ export async function GET(req: Request) {
   let rangeQuery = supabaseAdmin
     .from("retail_transactions")
     .select(
-      "id,type,occurred_at,total_cents,payment_cents,refund_cents,balance_change_cents,customer_id,method,reference,receipt_prefix,receipt_number,retail_customers(full_name)"
+      "id,type,occurred_at,total,amount,balance_after,customer_id,province,memo,retail_customers(full_name)"
     )
     .eq("business_id", guard.client.id)
     .order("occurred_at", { ascending: false });
@@ -31,23 +31,33 @@ export async function GET(req: Request) {
   let refundsTotal = 0;
 
   for (const tx of rangeTx || []) {
-    if (tx.type === "sale") salesTotal += tx.total_cents || 0;
-    if (tx.type === "payment") paymentsTotal += tx.payment_cents || 0;
-    if (tx.type === "refund") refundsTotal += tx.refund_cents || 0;
+    if (tx.type === "sale") salesTotal += tx.total || 0;
+    if (tx.type === "payment") paymentsTotal += tx.amount || 0;
+    if (tx.type === "refund") refundsTotal += tx.amount || 0;
   }
 
   const { data: allTx, error: allErr } = await supabaseAdmin
     .from("retail_transactions")
-    .select("customer_id,balance_change_cents")
+    .select("customer_id,balance_after,occurred_at")
     .eq("business_id", guard.client.id);
 
   if (allErr) return NextResponse.json({ error: allErr.message }, { status: 500 });
 
   const balanceByCustomer: Record<string, number> = {};
+  const lastActivity: Record<string, string> = {};
   for (const tx of allTx || []) {
     if (!tx.customer_id) continue;
-    balanceByCustomer[tx.customer_id] =
-      (balanceByCustomer[tx.customer_id] || 0) + (tx.balance_change_cents || 0);
+    const occurred = tx.occurred_at as string | null;
+    if (!occurred) continue;
+    if (!lastActivity[tx.customer_id]) {
+      lastActivity[tx.customer_id] = occurred;
+      balanceByCustomer[tx.customer_id] = tx.balance_after || 0;
+      continue;
+    }
+    if (new Date(occurred).getTime() > new Date(lastActivity[tx.customer_id]).getTime()) {
+      lastActivity[tx.customer_id] = occurred;
+      balanceByCustomer[tx.customer_id] = tx.balance_after || 0;
+    }
   }
 
   const outstandingReceivables = Object.values(balanceByCustomer).reduce(

@@ -1,8 +1,8 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { requireRetailClient } from "@/lib/retail/guard";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 
-export async function GET(req: Request) {
+export async function GET(req: NextRequest) {
   const guard = await requireRetailClient();
   if ("error" in guard) {
     return NextResponse.json({ error: guard.error }, { status: guard.status });
@@ -14,7 +14,7 @@ export async function GET(req: Request) {
 
   let query = supabaseAdmin
     .from("retail_transactions")
-    .select("type,occurred_at,total_cents,payment_cents,refund_cents")
+    .select("type,occurred_at,total,amount")
     .eq("business_id", guard.client.id)
     .order("occurred_at", { ascending: true });
 
@@ -34,9 +34,9 @@ export async function GET(req: Request) {
     if (!buckets[date]) {
       buckets[date] = { date, sales_cents: 0, payments_cents: 0, refunds_cents: 0 };
     }
-    if (tx.type === "sale") buckets[date].sales_cents += tx.total_cents || 0;
-    if (tx.type === "payment") buckets[date].payments_cents += tx.payment_cents || 0;
-    if (tx.type === "refund") buckets[date].refunds_cents += tx.refund_cents || 0;
+    if (tx.type === "sale") buckets[date].sales_cents += tx.total || 0;
+    if (tx.type === "payment") buckets[date].payments_cents += tx.amount || 0;
+    if (tx.type === "refund") buckets[date].refunds_cents += tx.amount || 0;
   }
 
   const rows = Object.values(buckets).sort((a, b) => a.date.localeCompare(b.date));

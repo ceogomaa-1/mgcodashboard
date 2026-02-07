@@ -1,9 +1,9 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { requireRetailClient } from "@/lib/retail/guard";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 
 export async function GET(
-  _: Request,
+  _: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const guard = await requireRetailClient();
@@ -16,7 +16,7 @@ export async function GET(
   const { data: transaction, error } = await supabaseAdmin
     .from("retail_transactions")
     .select(
-      "id,customer_id,type,occurred_at,reference,method,subtotal_cents,discount_type,discount_value,tax_enabled,tax_rate_bps,tax_cents,total_cents,amount_paid_cents,payment_cents,refund_cents,balance_change_cents,receipt_prefix,receipt_number,created_at,retail_customers(full_name,email,phone)"
+      "id,customer_id,type,subtotal,discount_amount,tax_rate,tax_amount,total,amount,balance_after,province,memo,occurred_at,retail_customers(full_name,email,phone)"
     )
     .eq("business_id", guard.client.id)
     .eq("id", txId)

@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { requireRetailClient } from "@/lib/retail/guard";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 
@@ -7,7 +7,7 @@ function safeString(value: any) {
   return value.trim();
 }
 
-export async function GET(req: Request) {
+export async function GET(req: NextRequest) {
   const guard = await requireRetailClient();
   if ("error" in guard) {
     return NextResponse.json({ error: guard.error }, { status: guard.status });
@@ -37,7 +37,7 @@ export async function GET(req: Request) {
 
   const { data: txRows, error: txErr } = await supabaseAdmin
     .from("retail_transactions")
-    .select("customer_id,balance_change_cents,occurred_at")
+    .select("customer_id,balance_after,occurred_at")
     .eq("business_id", guard.client.id);
 
   if (txErr) return NextResponse.json({ error: txErr.message }, { status: 500 });
@@ -47,26 +47,27 @@ export async function GET(req: Request) {
 
   for (const row of txRows || []) {
     if (!row.customer_id) continue;
-    balances[row.customer_id] = (balances[row.customer_id] || 0) + (row.balance_change_cents || 0);
     const occurred = row.occurred_at as string | null;
     if (!occurred) continue;
     if (!lastActivity[row.customer_id]) {
       lastActivity[row.customer_id] = occurred;
+      balances[row.customer_id] = row.balance_after || 0;
     } else if (new Date(occurred).getTime() > new Date(lastActivity[row.customer_id]).getTime()) {
       lastActivity[row.customer_id] = occurred;
+      balances[row.customer_id] = row.balance_after || 0;
     }
   }
 
   const hydrated = (customers || []).map((c) => ({
     ...c,
-    balance_cents: balances[c.id] || 0,
+    balance_after: balances[c.id] || 0,
     last_activity: lastActivity[c.id] || null,
   }));
 
   return NextResponse.json({ customers: hydrated }, { status: 200 });
 }
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   const guard = await requireRetailClient();
   if ("error" in guard) {
     return NextResponse.json({ error: guard.error }, { status: guard.status });
@@ -86,7 +87,6 @@ export async function POST(req: Request) {
     email: safeString(body?.email) || null,
     notes: safeString(body?.notes) || null,
     status: safeString(body?.status) || "active",
-    created_by_user_id: guard.userId,
     updated_at: new Date().toISOString(),
   };
 
