@@ -433,6 +433,10 @@ export default function RetailLedgerClient({ client }: { client: RetailClient })
 
       if (txForm.type === "sale") {
         const subtotalCents = parseCents(txForm.subtotal);
+        if (subtotalCents <= 0) {
+          setErrorBanner("Subtotal must be greater than 0.");
+          return;
+        }
         payload.subtotal = subtotalCents;
         payload.discount_amount = computeDiscountAmount(
           subtotalCents,
@@ -445,11 +449,21 @@ export default function RetailLedgerClient({ client }: { client: RetailClient })
       }
 
       if (txForm.type === "payment") {
-        payload.amount = parseCents(txForm.payment_amount);
+        const amount = parseCents(txForm.payment_amount);
+        if (amount <= 0) {
+          setErrorBanner("Payment amount must be greater than 0.");
+          return;
+        }
+        payload.amount = amount;
       }
 
       if (txForm.type === "refund") {
-        payload.amount = parseCents(txForm.refund_amount);
+        const amount = parseCents(txForm.refund_amount);
+        if (amount <= 0) {
+          setErrorBanner("Refund amount must be greater than 0.");
+          return;
+        }
+        payload.amount = amount;
       }
 
       const res = await fetch("/api/retail/transactions", {
@@ -1158,7 +1172,7 @@ export default function RetailLedgerClient({ client }: { client: RetailClient })
       ) : null}
 
       {showQuickCustomerModal ? (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4">
           <div className="w-full max-w-md max-h-[90vh] overflow-y-auto rounded-2xl border border-white/10 bg-slate-900 p-6">
             <div className="text-lg font-semibold">New Customer</div>
             <div className="mt-2 text-xs opacity-70">Customer ID: {quickCustomerId}</div>
