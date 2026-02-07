@@ -130,10 +130,10 @@ export async function POST(req: NextRequest) {
 
     payload = {
       ...payload,
-      subtotal: null,
-      discount_amount: null,
-      tax_rate: null,
-      tax_amount: null,
+      subtotal: 0,
+      discount_amount: 0,
+      tax_rate: 0,
+      tax_amount: 0,
       total: -amount,
       amount,
       balance_after: balanceAfter,
@@ -148,10 +148,10 @@ export async function POST(req: NextRequest) {
 
     payload = {
       ...payload,
-      subtotal: null,
-      discount_amount: null,
-      tax_rate: null,
-      tax_amount: null,
+      subtotal: 0,
+      discount_amount: 0,
+      tax_rate: 0,
+      tax_amount: 0,
       total: -amount,
       amount,
       balance_after: balanceAfter,
