@@ -81,3 +81,25 @@ export async function PATCH(
 
   return NextResponse.json({ patient: data }, { status: 200 });
 }
+
+export async function DELETE(
+  _: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const guard = await requireHealthcareClient();
+  if ("error" in guard) {
+    return NextResponse.json({ error: guard.error }, { status: guard.status });
+  }
+
+  const { id } = await params;
+
+  const { error } = await supabaseAdmin
+    .from("healthcare_patients")
+    .delete()
+    .eq("business_id", guard.client.id)
+    .eq("id", id);
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  return NextResponse.json({ ok: true }, { status: 200 });
+}

@@ -57,6 +57,7 @@ export default function HealthcareCrmClient({
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -145,6 +146,33 @@ export default function HealthcareCrmClient({
     }
   }
 
+  async function removePatient(patient: HealthcarePatient) {
+    const confirmed = window.confirm(`Remove client "${patient.full_name}"?`);
+    if (!confirmed) return;
+
+    setDeletingId(patient.id);
+    setError(null);
+
+    try {
+      const res = await fetch(`/api/healthcare/patients/${patient.id}`, {
+        method: "DELETE",
+      });
+
+      if (!res.ok) {
+        const text = await res.text();
+        setError(text || "Failed to remove client.");
+        setDeletingId(null);
+        return;
+      }
+
+      setPatients((prev) => prev.filter((p) => p.id !== patient.id));
+      setDeletingId(null);
+    } catch (err: unknown) {
+      setError(getErrorMessage(err));
+      setDeletingId(null);
+    }
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-black via-black to-emerald-950/60 text-white">
       <div className="mx-auto max-w-6xl px-6 py-10">
@@ -222,8 +250,22 @@ export default function HealthcareCrmClient({
                     </div>
                   </div>
 
-                  <div className="rounded-full border border-white/10 px-3 py-1 text-xs opacity-80 group-open:opacity-100">
-                    Expand
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        removePatient(patient);
+                      }}
+                      className="rounded-full border border-red-400/40 bg-red-500/10 px-3 py-1 text-xs text-red-200 hover:bg-red-500/20 disabled:opacity-60"
+                      disabled={deletingId === patient.id}
+                    >
+                      {deletingId === patient.id ? "Removing..." : "Remove Client"}
+                    </button>
+                    <div className="rounded-full border border-white/10 px-3 py-1 text-xs opacity-80 group-open:opacity-100">
+                      Expand
+                    </div>
                   </div>
                 </div>
               </summary>
