@@ -275,6 +275,7 @@ export default function ClientDashboardPage() {
 
   const retellStatus = integration?.retell_connected ? "Connected" : "Not connected";
   const isRetailClient = (client?.industry || "").trim().toLowerCase() === "retail";
+  const isHealthcareClient = (client?.industry || "").trim().toLowerCase() === "healthcare";
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-black via-black to-emerald-950/60 text-white">
@@ -330,6 +331,11 @@ export default function ClientDashboardPage() {
             {isRetailClient ? (
               <Button variant="secondary" onClick={() => router.push("/dashboard/retail-ledger")}>
                 Retail Ledger
+              </Button>
+            ) : null}
+            {isHealthcareClient ? (
+              <Button variant="secondary" onClick={() => router.push("/dashboard/healthcare-crm")}>
+                Healthcare CRM
               </Button>
             ) : null}
             <Button
