@@ -24,6 +24,28 @@ function parseDate(input: unknown) {
   return input;
 }
 
+async function ensureWeeklyBucket() {
+  const { data: buckets, error: listErr } = await supabaseAdmin.storage.listBuckets();
+  if (listErr) throw new Error(listErr.message);
+
+  const exists = (buckets || []).some((bucket) => bucket.name === BUCKET);
+  if (exists) return;
+
+  const { error: createErr } = await supabaseAdmin.storage.createBucket(BUCKET, {
+    public: false,
+    fileSizeLimit: `${MAX_FILE_SIZE_BYTES}`,
+    allowedMimeTypes: ["application/pdf"],
+  });
+
+  if (
+    createErr &&
+    !/already exists/i.test(createErr.message) &&
+    !/duplicate/i.test(createErr.message)
+  ) {
+    throw new Error(createErr.message);
+  }
+}
+
 export async function GET(
   _req: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -81,6 +103,13 @@ export async function POST(
 
   const arrayBuffer = await file.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
+
+  try {
+    await ensureWeeklyBucket();
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Failed to initialize storage bucket.";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
 
   const { error: uploadErr } = await supabaseAdmin.storage.from(BUCKET).upload(filePath, buffer, {
     contentType: file.type || "application/pdf",

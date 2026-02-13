@@ -105,7 +105,7 @@ export async function getClientByAuthEmail(): Promise<ClientByEmailOk | AccessEr
   const { data: client, error } = await supabaseAdmin
     .from("clients")
     .select("id,business_name,owner_email,industry,status")
-    .eq("owner_email", auth.email)
+    .ilike("owner_email", auth.email)
     .maybeSingle();
 
   if (error) {
