@@ -25,6 +25,7 @@ export default function ConnectRetell() {
 
   const [formData, setFormData] = useState({
     retell_api_key: '',
+    retell_public_api_key: '',
     retell_agent_id: '',
   });
 
@@ -51,6 +52,7 @@ export default function ConnectRetell() {
           setIsConnected(!!integration.retell_connected);
           setFormData({
             retell_api_key: integration.retell_api_key || '',
+            retell_public_api_key: integration.retell_public_api_key || '',
             retell_agent_id: integration.retell_agent_id || '',
           });
         } else {
@@ -78,6 +80,7 @@ export default function ConnectRetell() {
 
     try {
       const apiKey = formData.retell_api_key.trim();
+      const publicApiKey = formData.retell_public_api_key.trim();
       const agentId = formData.retell_agent_id.trim();
 
       if (!apiKey.startsWith('key_')) {
@@ -92,6 +95,12 @@ export default function ConnectRetell() {
         return;
       }
 
+      if (!publicApiKey.startsWith('public_key_')) {
+        setError('Retell Public API key must start with "public_key_".');
+        setSaving(false);
+        return;
+      }
+
       // IMPORTANT: Upsert so we never silently update 0 rows
       const { error } = await supabase
         .from('integrations')
@@ -99,6 +108,7 @@ export default function ConnectRetell() {
           {
             client_id: clientId,
             retell_api_key: apiKey,
+            retell_public_api_key: publicApiKey,
             retell_agent_id: agentId,
             retell_connected: true,
             updated_at: new Date().toISOString(),
@@ -137,6 +147,7 @@ export default function ConnectRetell() {
           {
             client_id: clientId,
             retell_api_key: null,
+            retell_public_api_key: null,
             retell_agent_id: null,
             retell_phone_number: null,
             retell_connected: false,
@@ -147,7 +158,7 @@ export default function ConnectRetell() {
 
       if (error) throw error;
 
-      setFormData({ retell_api_key: '', retell_agent_id: '' });
+      setFormData({ retell_api_key: '', retell_public_api_key: '', retell_agent_id: '' });
       setIsConnected(false);
       setSuccess(true);
 
@@ -228,6 +239,19 @@ export default function ConnectRetell() {
                   onChange={(e) => handleChange('retell_agent_id', e.target.value)}
                   placeholder="agent_xxxxxxxxxxxxx"
                   className="bg-white/5 border-white/10 text-white placeholder:text-gray-500"
+                  required
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="retell_public_api_key" className="text-white">Retell Public API Key *</Label>
+                <Input
+                  id="retell_public_api_key"
+                  type="password"
+                  value={formData.retell_public_api_key}
+                  onChange={(e) => handleChange('retell_public_api_key', e.target.value)}
+                  placeholder="public_key_xxxxxxxxxxxxx"
+                  className="bg-white/5 border-white/10 text-white placeholder:text-gray-500 font-mono"
                   required
                 />
               </div>
