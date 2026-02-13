@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { createClient } from "@/lib/supabase/client";
-import { AIReceptionistSection } from "@/components/client/ai-receptionist-section";
 
 // Helpers
 function startOfMonth(d: Date) {
@@ -69,61 +68,36 @@ function pillClass(kind: "base" | "green" | "blue") {
   return "bg-white/5 border-white/10 text-white/80";
 }
 
-type RetellAnalytics = {
-  range: { startMs: number; endMs: number };
-  meta?: {
-    requestedRange?: { startMs: number; endMs: number };
-    autoExpanded?: boolean;
-  };
-  totals: {
-    totalCalls: number;
-    successful: number;
-    unsuccessful: number;
-    avgDurationSec: number;
-    totalDurationSec: number;
-    avgLatencyMs: number | null;
-  };
-  breakdowns: {
-    disconnectionReasons: Record<string, number>;
-    userSentiments: Record<string, number>;
-  };
+type WeeklyReport = {
+  id: string;
+  week_start: string;
+  week_end: string;
+  report_file_name: string;
+  created_at: string;
+  analysis_json: {
+    summary?: { title?: string; subtitle?: string; periodLabel?: string };
+    kpis?: Array<{
+      id: string;
+      label: string;
+      value: number | string;
+      unit: string | null;
+      changePercent: number | null;
+      trend: "up" | "down" | "flat" | "unknown";
+    }>;
+    charts?: Array<{
+      id: string;
+      title: string;
+      type: "bar" | "line" | "area" | "donut";
+      points: Array<{ label: string; value: number }>;
+    }>;
+    highlights?: string[];
+    notes?: string[];
+  } | null;
 };
 
-function secondsToMMSS(sec: number) {
-  const s = Math.max(0, Math.floor(sec));
-  const mm = Math.floor(s / 60);
-  const ss = s % 60;
-  return `${String(mm).padStart(2, "0")}:${String(ss).padStart(2, "0")}`;
-}
-
-function topEntries(obj: Record<string, number>, n = 6) {
-  return Object.entries(obj)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, n);
-}
-
-function toDateInputValue(d: Date) {
-  const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
-  return local.toISOString().slice(0, 10);
-}
-
-function rangeFromPreset(preset: "7d" | "30d" | "90d") {
-  const end = new Date();
-  const start = new Date();
-  const days = preset === "7d" ? 7 : preset === "90d" ? 90 : 30;
-  start.setDate(end.getDate() - (days - 1));
-  return {
-    startDate: toDateInputValue(start),
-    endDate: toDateInputValue(end),
-  };
-}
-
-function dayStartMs(input: string) {
-  return new Date(`${input}T00:00:00`).getTime();
-}
-
-function dayEndMs(input: string) {
-  return new Date(`${input}T23:59:59.999`).getTime();
+function chartPointMax(points: Array<{ value: number }>) {
+  const max = points.reduce((acc, item) => Math.max(acc, item.value), 0);
+  return max > 0 ? max : 1;
 }
 
 export default function ClientDashboardPage() {
@@ -139,13 +113,9 @@ export default function ClientDashboardPage() {
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [selectedDay, setSelectedDay] = useState<Date | null>(null);
 
-  // RETELL (updated)
-  const [retellStats, setRetellStats] = useState<RetellAnalytics | null>(null);
-  const [retellLoading, setRetellLoading] = useState(false);
-  const [retellError, setRetellError] = useState<string | null>(null);
-  const [retellPreset, setRetellPreset] = useState<"7d" | "30d" | "90d" | "custom">("30d");
-  const [retellStartDate, setRetellStartDate] = useState(() => rangeFromPreset("30d").startDate);
-  const [retellEndDate, setRetellEndDate] = useState(() => rangeFromPreset("30d").endDate);
+  const [weeklyReport, setWeeklyReport] = useState<WeeklyReport | null>(null);
+  const [weeklyLoading, setWeeklyLoading] = useState(false);
+  const [weeklyError, setWeeklyError] = useState<string | null>(null);
 
   const clientId = client?.id || "";
   const monthLabel = useMemo(() => formatMonthLabel(month), [month]);
@@ -210,66 +180,30 @@ export default function ClientDashboardPage() {
     }
   }
 
-  // RETELL (updated endpoint + error handling)
-  async function refreshRetell(cid: string, startMs?: number, endMs?: number) {
+  async function refreshWeeklyAnalysis(cid: string) {
     if (!cid) return;
-    setRetellLoading(true);
-    setRetellError(null);
+    setWeeklyLoading(true);
+    setWeeklyError(null);
 
     try {
-      const params = new URLSearchParams();
-      params.set("clientId", cid);
-      if (typeof startMs === "number" && Number.isFinite(startMs)) {
-        params.set("startMs", String(Math.floor(startMs)));
-      }
-      if (typeof endMs === "number" && Number.isFinite(endMs)) {
-        params.set("endMs", String(Math.floor(endMs)));
-      }
-      params.set("autoExpand", "1");
-      const res = await fetch(`/api/retell/account-analytics?${params.toString()}`, {
+      const res = await fetch("/api/client/weekly-analysis", {
         cache: "no-store",
       });
-
-      const text = await res.text();
       if (!res.ok) {
-        setRetellStats(null);
-        setRetellError(text || `Failed (${res.status})`);
-        setRetellLoading(false);
+        const text = await res.text();
+        setWeeklyReport(null);
+        setWeeklyError(text || `Failed (${res.status})`);
+        setWeeklyLoading(false);
         return;
       }
 
-      setRetellStats(JSON.parse(text));
-      setRetellLoading(false);
+      const json = await res.json();
+      setWeeklyReport((json?.report as WeeklyReport) || null);
+      setWeeklyLoading(false);
     } catch (e: unknown) {
-      setRetellStats(null);
-      setRetellError(e instanceof Error ? e.message : "Failed to load analytics.");
-      setRetellLoading(false);
-    }
-  }
-
-  function currentRetellRangeMs() {
-    const startMs = dayStartMs(retellStartDate);
-    const endMs = dayEndMs(retellEndDate);
-    return { startMs, endMs };
-  }
-
-  function applyRetellRange() {
-    if (!clientId) return;
-    const { startMs, endMs } = currentRetellRangeMs();
-    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || startMs > endMs) {
-      setRetellError("Invalid date range.");
-      return;
-    }
-    refreshRetell(clientId, startMs, endMs);
-  }
-
-  function onRetellPreset(preset: "7d" | "30d" | "90d") {
-    setRetellPreset(preset);
-    const r = rangeFromPreset(preset);
-    setRetellStartDate(r.startDate);
-    setRetellEndDate(r.endDate);
-    if (clientId) {
-      refreshRetell(clientId, dayStartMs(r.startDate), dayEndMs(r.endDate));
+      setWeeklyReport(null);
+      setWeeklyError(e instanceof Error ? e.message : "Failed to load weekly analysis.");
+      setWeeklyLoading(false);
     }
   }
 
@@ -313,15 +247,14 @@ export default function ClientDashboardPage() {
 
     setIntegration((intRow as IntegrationRow) || null);
     setLoading(false);
-    const initialRange = currentRetellRangeMs();
 
     if (!intRow?.google_calendar_embed_url) {
       await Promise.all([
         refreshCalendar(clientRow.id, month),
-        refreshRetell(clientRow.id, initialRange.startMs, initialRange.endMs),
+        refreshWeeklyAnalysis(clientRow.id),
       ]);
     } else {
-      await Promise.all([refreshRetell(clientRow.id, initialRange.startMs, initialRange.endMs)]);
+      await Promise.all([refreshWeeklyAnalysis(clientRow.id)]);
     }
   }
 
@@ -618,175 +551,120 @@ export default function ClientDashboardPage() {
               </div>
             )}
 
-            {/* RETELL (updated UI only) */}
+            {/* WEEKLY ANALYSIS */}
             <div className="mt-8 rounded-2xl border border-white/10 bg-white/5 p-6">
               <div className="flex items-start justify-between gap-4 flex-wrap">
                 <div>
-                  <div className="text-lg font-semibold">Retell Analytics</div>
-                  <div className="text-sm opacity-70">Account-wide totals (All agents)</div>
+                  <div className="text-lg font-semibold">Weekly Analysis</div>
+                  <div className="text-sm opacity-70">
+                    Uploaded by TechOps from your weekly analytics PDF
+                  </div>
                 </div>
                 <Button
                   variant="secondary"
-                  onClick={applyRetellRange}
-                  disabled={!integration?.retell_connected || retellLoading}
+                  onClick={() => refreshWeeklyAnalysis(clientId)}
+                  disabled={weeklyLoading}
                 >
-                  {retellLoading ? "Loading…" : "Refresh"}
+                  {weeklyLoading ? "Loading…" : "Refresh"}
                 </Button>
               </div>
 
-              <div className="mt-4 flex flex-wrap items-end gap-2">
-                <button
-                  onClick={() => onRetellPreset("7d")}
-                  className={`px-3 py-2 rounded-lg text-sm border ${
-                    retellPreset === "7d"
-                      ? "border-white/30 bg-white/20"
-                      : "border-white/10 bg-white/5 hover:bg-white/10"
-                  }`}
-                  disabled={!integration?.retell_connected || retellLoading}
-                >
-                  7D
-                </button>
-                <button
-                  onClick={() => onRetellPreset("30d")}
-                  className={`px-3 py-2 rounded-lg text-sm border ${
-                    retellPreset === "30d"
-                      ? "border-white/30 bg-white/20"
-                      : "border-white/10 bg-white/5 hover:bg-white/10"
-                  }`}
-                  disabled={!integration?.retell_connected || retellLoading}
-                >
-                  30D
-                </button>
-                <button
-                  onClick={() => onRetellPreset("90d")}
-                  className={`px-3 py-2 rounded-lg text-sm border ${
-                    retellPreset === "90d"
-                      ? "border-white/30 bg-white/20"
-                      : "border-white/10 bg-white/5 hover:bg-white/10"
-                  }`}
-                  disabled={!integration?.retell_connected || retellLoading}
-                >
-                  90D
-                </button>
-                <input
-                  type="date"
-                  value={retellStartDate}
-                  onChange={(e) => {
-                    setRetellPreset("custom");
-                    setRetellStartDate(e.target.value);
-                  }}
-                  className="px-3 py-2 rounded-lg text-sm border border-white/10 bg-white/5"
-                  disabled={!integration?.retell_connected || retellLoading}
-                />
-                <input
-                  type="date"
-                  value={retellEndDate}
-                  onChange={(e) => {
-                    setRetellPreset("custom");
-                    setRetellEndDate(e.target.value);
-                  }}
-                  className="px-3 py-2 rounded-lg text-sm border border-white/10 bg-white/5"
-                  disabled={!integration?.retell_connected || retellLoading}
-                />
-                <button
-                  onClick={applyRetellRange}
-                  className="px-3 py-2 rounded-lg text-sm border border-white/15 bg-white/10 hover:bg-white/15"
-                  disabled={!integration?.retell_connected || retellLoading}
-                >
-                  Apply
-                </button>
-              </div>
-
-              {!integration?.retell_connected ? (
-                <div className="mt-6 text-sm opacity-70">Retell is not connected yet.</div>
-              ) : retellError ? (
+              {weeklyError ? (
                 <div className="mt-6 text-sm text-red-300">
-                  Failed to load analytics.{" "}
-                  <span className="opacity-80 break-all">{retellError}</span>
+                  Failed to load weekly analysis.{" "}
+                  <span className="opacity-80 break-all">{weeklyError}</span>
                 </div>
-              ) : !retellStats ? (
-                <div className="mt-6 text-sm opacity-70">No data yet.</div>
+              ) : !weeklyReport ? (
+                <div className="mt-6 text-sm opacity-70">
+                  No weekly PDF analytics uploaded yet. TechOps will upload your weekly report soon.
+                </div>
               ) : (
                 <div className="mt-6">
-                  {/* Top KPI cards */}
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div className="rounded-2xl border border-white/10 bg-black/20 p-5">
-                      <div className="text-sm opacity-70">Call Counts</div>
-                      <div className="mt-2 text-4xl font-semibold">
-                        {retellStats.totals.totalCalls}
-                      </div>
-                      <div className="mt-2 text-xs opacity-70">
-                        Successful: {retellStats.totals.successful} • Unsuccessful:{" "}
-                        {retellStats.totals.unsuccessful}
-                      </div>
+                  <div className="mb-4">
+                    <div className="text-xl font-semibold">
+                      {weeklyReport.analysis_json?.summary?.title || "Weekly Performance Report"}
                     </div>
-
-                    <div className="rounded-2xl border border-white/10 bg-black/20 p-5">
-                      <div className="text-sm opacity-70">Call Duration</div>
-                      <div className="mt-2 text-4xl font-semibold">
-                        {secondsToMMSS(retellStats.totals.avgDurationSec)}
-                      </div>
-                      <div className="mt-2 text-xs opacity-70">
-                        Total: {secondsToMMSS(retellStats.totals.totalDurationSec)}
-                      </div>
+                    <div className="text-sm opacity-70 mt-1">
+                      {weeklyReport.analysis_json?.summary?.subtitle || "Latest uploaded analytics"}
                     </div>
-
-                    <div className="rounded-2xl border border-white/10 bg-black/20 p-5">
-                      <div className="text-sm opacity-70">Call Latency</div>
-                      <div className="mt-2 text-4xl font-semibold">
-                        {retellStats.totals.avgLatencyMs === null
-                          ? "—"
-                          : `${Math.round(retellStats.totals.avgLatencyMs)}ms`}
-                      </div>
-                      <div className="mt-2 text-xs opacity-70">
-                        Avg across calls that reported latency
-                      </div>
+                    <div className="text-xs opacity-60 mt-1">
+                      Period:{" "}
+                      {weeklyReport.analysis_json?.summary?.periodLabel ||
+                        `${weeklyReport.week_start} to ${weeklyReport.week_end}`}{" "}
+                      • Uploaded: {new Date(weeklyReport.created_at).toLocaleDateString()}
                     </div>
                   </div>
 
-                  {/* Breakdowns */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+                    {(weeklyReport.analysis_json?.kpis || []).map((kpi) => (
+                      <div
+                        key={kpi.id}
+                        className="rounded-2xl border border-white/10 bg-black/20 p-4 transition-all duration-200 hover:-translate-y-1 hover:border-emerald-300/40 hover:shadow-[0_0_22px_rgba(16,185,129,0.22)]"
+                      >
+                        <div className="text-xs opacity-70">{kpi.label}</div>
+                        <div className="mt-2 text-3xl font-semibold">
+                          {kpi.value}
+                          {kpi.unit ? (
+                            <span className="text-base ml-1 opacity-80">{kpi.unit}</span>
+                          ) : null}
+                        </div>
+                        <div className="mt-2 text-xs opacity-70">
+                          {kpi.changePercent === null
+                            ? "No change data"
+                            : `${kpi.changePercent}% vs previous period`}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
                   <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-4">
-                    <div className="rounded-2xl border border-white/10 bg-black/20 p-5">
-                      <div className="text-sm font-medium">Disconnection Reason</div>
-                      <div className="mt-3 space-y-2 text-sm">
-                        {topEntries(retellStats.breakdowns.disconnectionReasons, 8).map(
-                          ([k, v]) => (
-                            <div key={k} className="flex items-center justify-between gap-3">
-                              <div className="truncate opacity-80">{k}</div>
-                              <div className="tabular-nums opacity-90">{v}</div>
-                            </div>
-                          )
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="rounded-2xl border border-white/10 bg-black/20 p-5">
-                      <div className="text-sm font-medium">User Sentiment</div>
-                      <div className="mt-3 space-y-2 text-sm">
-                        {topEntries(retellStats.breakdowns.userSentiments, 8).map(([k, v]) => (
-                          <div key={k} className="flex items-center justify-between gap-3">
-                            <div className="truncate opacity-80">{k}</div>
-                            <div className="tabular-nums opacity-90">{v}</div>
+                    {(weeklyReport.analysis_json?.charts || []).map((chart) => {
+                      const max = chartPointMax(chart.points || []);
+                      return (
+                        <div
+                          key={chart.id}
+                          className="rounded-2xl border border-white/10 bg-black/20 p-4 transition-all duration-200 hover:-translate-y-1 hover:border-sky-300/40"
+                        >
+                          <div className="text-sm font-medium mb-3">{chart.title}</div>
+                          <div className="space-y-2">
+                            {chart.points.map((point) => (
+                              <div key={`${chart.id}-${point.label}`}>
+                                <div className="flex items-center justify-between text-xs opacity-80">
+                                  <span>{point.label}</span>
+                                  <span className="tabular-nums">{point.value}</span>
+                                </div>
+                                <div className="mt-1 h-2 rounded-full bg-white/10 overflow-hidden">
+                                  <div
+                                    className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-sky-400 transition-all duration-700"
+                                    style={{
+                                      width: `${Math.max(
+                                        4,
+                                        Math.round((point.value / max) * 100)
+                                      )}%`,
+                                    }}
+                                  />
+                                </div>
+                              </div>
+                            ))}
                           </div>
-                        ))}
-                      </div>
-                    </div>
+                        </div>
+                      );
+                    })}
                   </div>
 
-                  <div className="mt-3 text-xs opacity-70">
-                    Range: {new Date(retellStats.range.startMs).toLocaleDateString()} –{" "}
-                    {new Date(retellStats.range.endMs).toLocaleDateString()}
-                  </div>
-                  {retellStats.meta?.autoExpanded ? (
-                    <div className="mt-1 text-xs text-amber-200/90">
-                      No calls found in the exact selected range, showing broader recent history.
+                  {(weeklyReport.analysis_json?.highlights || []).length ? (
+                    <div className="mt-6 rounded-2xl border border-white/10 bg-black/20 p-4">
+                      <div className="text-sm font-medium mb-2">Highlights</div>
+                      <ul className="space-y-1 text-sm opacity-85">
+                        {(weeklyReport.analysis_json?.highlights || []).map((item, idx) => (
+                          <li key={`${idx}-${item}`}>• {item}</li>
+                        ))}
+                      </ul>
                     </div>
                   ) : null}
                 </div>
               )}
             </div>
-
-            <AIReceptionistSection clientId={client.id} />
           </>
         ) : null}
       </div>

@@ -2,10 +2,10 @@
 
 Next.js + TypeScript + Supabase multi-tenant dashboard with TechOps and client portals.
 
-## New Feature: AI Agent Playground (TechOps)
+## New Feature: Weekly PDF Analytics + AI Agent Playground (TechOps)
 
 - TechOps route: `/techops/ai-agent-playground`
-- Client visibility: clients do not see Playground routes; they only see read-only AI Receptionist analytics in `/client/dashboard`.
+- Client visibility: clients do not see Playground routes; they now see weekly analytics extracted from TechOps-uploaded PDF reports in `/client/dashboard`.
 
 ## Environment
 
@@ -33,12 +33,14 @@ Optional:
 
 - `TECHOPS_EMAILS` comma-separated allowlist (if omitted, authenticated users are treated as TechOps in API fallback mode)
 - `AGENT_CALL_RATE_LIMIT_PER_MINUTE`
+- `OPENAI_WEEKLY_ANALYTICS_MODEL` (default `gpt-4.1`)
 
 ## Database Migration (Supabase)
 
 Run:
 
 - `supabase/ai_agent_playground.sql`
+- `supabase/weekly_analysis.sql`
 
 This migration creates:
 
@@ -115,16 +117,14 @@ Provided tool functions:
 
 Each tool writes `call_events` and updates `calls.outcome` for booking/cancel/reschedule outcomes.
 
-## Client Dashboard Realtime Analytics
+## Client Dashboard Weekly Analytics
 
-`/client/dashboard` includes an **AI Receptionist** section with:
+`/client/dashboard` includes one analytics window under Calendar powered by weekly PDF uploads:
 
-- published agents
-- live call count
-- outcome breakdown
-- recent calls list
-- transcript/summary panel
-- realtime timeline via Supabase Realtime on `calls` + `call_events`
+- TechOps uploads PDF on `/techops/clients/:id`
+- backend stores PDF in Supabase Storage bucket `weekly-analysis-pdfs`
+- backend extracts structured KPIs/charts/highlights using OpenAI file + responses API
+- client sees latest uploaded weekly analysis with animated KPI/cards/charts
 
 ## Local Testing (ngrok)
 

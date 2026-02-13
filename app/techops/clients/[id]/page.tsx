@@ -26,11 +26,52 @@ import {
   MailCheck,
   Eye,
   EyeOff,
+  FileUp,
 } from 'lucide-react';
 
-function normalizeClient(c: any) {
+type WeeklyReport = {
+  id: string;
+  client_id: string;
+  week_start: string;
+  week_end: string;
+  report_file_name: string;
+  status: string;
+  analysis_json: {
+    kpis?: unknown[];
+    charts?: unknown[];
+  } | null;
+  created_at: string;
+};
+
+type IntegrationView = {
+  retell_connected?: boolean;
+  retell_agent_id?: string | null;
+  retell_phone_number?: string | null;
+  google_calendar_connected?: boolean;
+  google_calendar_id?: string | null;
+  google_calendar_email?: string | null;
+  retell_account_email?: string | null;
+  retell_account_password?: string | null;
+  automation_tools_email?: string | null;
+  automation_tools_password?: string | null;
+  google_credentials_email?: string | null;
+  google_credentials_password?: string | null;
+};
+
+type ClientView = {
+  id: string;
+  business_name: string | null;
+  owner_email: string | null;
+  industry: string | null;
+  phone_number: string | null;
+  address?: string | null;
+  status: string;
+  integrations?: IntegrationView | null;
+};
+
+function normalizeClient(c: Record<string, unknown>) {
   const integ = Array.isArray(c?.integrations) ? (c.integrations[0] ?? null) : (c.integrations ?? null);
-  return { ...c, integrations: integ };
+  return { ...c, integrations: integ } as unknown as ClientView;
 }
 
 function mask(value?: string | null) {
@@ -76,7 +117,7 @@ export default function TechOpsClientDetails() {
   const clientId = Array.isArray(params.id) ? params.id[0] : (params.id as string);
 
   const [loading, setLoading] = useState(true);
-  const [client, setClient] = useState<any>(null);
+  const [client, setClient] = useState<ClientView | null>(null);
 
   // Credentials modal state
   const [showCredsModal, setShowCredsModal] = useState(false);
@@ -97,6 +138,12 @@ export default function TechOpsClientDetails() {
     automation_tools_password: false,
     google_credentials_password: false,
   });
+  const [weeklyReports, setWeeklyReports] = useState<WeeklyReport[]>([]);
+  const [weeklyMsg, setWeeklyMsg] = useState<string | null>(null);
+  const [uploadingWeekly, setUploadingWeekly] = useState(false);
+  const [weekStart, setWeekStart] = useState('');
+  const [weekEnd, setWeekEnd] = useState('');
+  const [weeklyFile, setWeeklyFile] = useState<File | null>(null);
 
   useEffect(() => {
     const fetchClient = async () => {
@@ -124,7 +171,7 @@ export default function TechOpsClientDetails() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clientId]);
 
-  const integration = useMemo(() => client?.integrations ?? null, [client]);
+  const integration = useMemo<IntegrationView | null>(() => client?.integrations ?? null, [client]);
 
   // Prefill creds from integrations row
   useEffect(() => {
@@ -139,6 +186,28 @@ export default function TechOpsClientDetails() {
       google_credentials_password: integration.google_credentials_password ?? '',
     });
   }, [integration]);
+
+  const loadWeeklyReports = async () => {
+    try {
+      const res = await fetch(`/api/techops/clients/${clientId}/weekly-analysis`, {
+        cache: 'no-store',
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setWeeklyMsg(json?.error || 'Failed to load weekly reports.');
+        return;
+      }
+      setWeeklyReports(Array.isArray(json?.reports) ? json.reports : []);
+	    } catch (e: unknown) {
+	      setWeeklyMsg(e instanceof Error ? e.message : 'Failed to load weekly reports.');
+	    }
+	  };
+
+  useEffect(() => {
+    if (!clientId) return;
+    loadWeeklyReports();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clientId]);
 
   const saveCredentials = async () => {
     setSavingCreds(true);
@@ -164,10 +233,50 @@ export default function TechOpsClientDetails() {
 
       setCredsMsg('Saved ✅');
       setSavingCreds(false);
-    } catch (e: any) {
-      setCredsMsg(e?.message ?? 'Failed to save.');
+    } catch (e: unknown) {
+      setCredsMsg(e instanceof Error ? e.message : 'Failed to save.');
       setSavingCreds(false);
     }
+  };
+
+  const uploadWeeklyAnalysis = async () => {
+    if (!weeklyFile) {
+      setWeeklyMsg('Please select a PDF file.');
+      return;
+    }
+    if (!weekStart || !weekEnd) {
+      setWeeklyMsg('Please select week start and week end dates.');
+      return;
+    }
+
+    setUploadingWeekly(true);
+    setWeeklyMsg(null);
+
+    try {
+      const body = new FormData();
+      body.append('file', weeklyFile);
+      body.append('weekStart', weekStart);
+      body.append('weekEnd', weekEnd);
+
+      const res = await fetch(`/api/techops/clients/${clientId}/weekly-analysis`, {
+        method: 'POST',
+        body,
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setWeeklyMsg(json?.error || 'Upload failed.');
+        setUploadingWeekly(false);
+        return;
+      }
+
+      setWeeklyMsg('Weekly analysis uploaded and extracted successfully.');
+      setWeeklyFile(null);
+      await loadWeeklyReports();
+    } catch (e: unknown) {
+      setWeeklyMsg(e instanceof Error ? e.message : 'Upload failed.');
+    }
+
+    setUploadingWeekly(false);
   };
 
   const statusBadge = (status: string) => {
@@ -378,6 +487,80 @@ export default function TechOpsClientDetails() {
             </Card>
           </div>
         </div>
+
+        <Card className="border-white/5 bg-white/[0.02]">
+          <CardHeader>
+            <CardTitle className="text-white text-lg flex items-center gap-2">
+              <FileUp className="h-5 w-5 text-emerald-400" />
+              Upload Weekly Analysis
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div>
+                <div className="text-xs text-white/60 mb-1">Week start</div>
+                <input
+                  type="date"
+                  className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none"
+                  value={weekStart}
+                  onChange={(e) => setWeekStart(e.target.value)}
+                />
+              </div>
+              <div>
+                <div className="text-xs text-white/60 mb-1">Week end</div>
+                <input
+                  type="date"
+                  className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none"
+                  value={weekEnd}
+                  onChange={(e) => setWeekEnd(e.target.value)}
+                />
+              </div>
+              <div>
+                <div className="text-xs text-white/60 mb-1">Weekly PDF</div>
+                <input
+                  type="file"
+                  accept="application/pdf,.pdf"
+                  className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white file:mr-3 file:rounded-md file:border-0 file:bg-emerald-500 file:px-3 file:py-1 file:text-white"
+                  onChange={(e) => setWeeklyFile(e.target.files?.[0] || null)}
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-sm text-white/70">
+                The PDF is parsed and stored as structured analytics for the client dashboard.
+              </div>
+              <Button className="bg-emerald-500 hover:bg-emerald-600 text-white" disabled={uploadingWeekly} onClick={uploadWeeklyAnalysis}>
+                {uploadingWeekly ? 'Uploading...' : 'Upload weekly analysis'}
+              </Button>
+            </div>
+
+            {weeklyMsg ? <div className="text-sm text-white/70">{weeklyMsg}</div> : null}
+
+            <div className="rounded-xl border border-white/10 bg-black/20">
+              <div className="grid grid-cols-12 px-3 py-2 text-xs uppercase tracking-wide text-white/50">
+                <div className="col-span-3">Week</div>
+                <div className="col-span-4">File</div>
+                <div className="col-span-2">Status</div>
+                <div className="col-span-3 text-right">Created</div>
+              </div>
+              {weeklyReports.length ? (
+                weeklyReports.map((report) => (
+                  <div key={report.id} className="grid grid-cols-12 items-center border-t border-white/5 px-3 py-2 text-sm text-white/80">
+                    <div className="col-span-3">
+                      {report.week_start} to {report.week_end}
+                    </div>
+                    <div className="col-span-4 truncate">{report.report_file_name}</div>
+                    <div className="col-span-2">{report.status}</div>
+                    <div className="col-span-3 text-right">{new Date(report.created_at).toLocaleDateString()}</div>
+                  </div>
+                ))
+              ) : (
+                <div className="border-t border-white/5 px-3 py-3 text-sm text-white/60">No weekly reports uploaded yet.</div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
 
         {/* TechOps-only Credentials (internal) */}
         <Card className="border-white/5 bg-white/[0.02]">
