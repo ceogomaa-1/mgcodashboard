@@ -87,7 +87,9 @@ export async function requireTechOps(): Promise<TechOpsOk | AccessError> {
     return { ok: true, auth };
   }
 
-  if (techOpsEmails.length === 0 || !techOpsEmails.includes(auth.email)) {
+  // Backward-compatible mode: if TECHOPS_EMAILS is not configured, allow any authenticated user.
+  // Once TECHOPS_EMAILS is set, enforce allowlist.
+  if (techOpsEmails.length > 0 && !techOpsEmails.includes(auth.email)) {
     return { ok: false, error: "Forbidden", status: 403 };
   }
 
