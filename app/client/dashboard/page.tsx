@@ -70,6 +70,10 @@ function pillClass(kind: "base" | "green" | "blue") {
 
 type RetellAnalytics = {
   range: { startMs: number; endMs: number };
+  meta?: {
+    requestedRange?: { startMs: number; endMs: number };
+    autoExpanded?: boolean;
+  };
   totals: {
     totalCalls: number;
     successful: number;
@@ -220,6 +224,7 @@ export default function ClientDashboardPage() {
       if (typeof endMs === "number" && Number.isFinite(endMs)) {
         params.set("endMs", String(Math.floor(endMs)));
       }
+      params.set("autoExpand", "1");
       const res = await fetch(`/api/retell/account-analytics?${params.toString()}`, {
         cache: "no-store",
       });
@@ -771,6 +776,11 @@ export default function ClientDashboardPage() {
                     Range: {new Date(retellStats.range.startMs).toLocaleDateString()} –{" "}
                     {new Date(retellStats.range.endMs).toLocaleDateString()}
                   </div>
+                  {retellStats.meta?.autoExpanded ? (
+                    <div className="mt-1 text-xs text-amber-200/90">
+                      No calls found in the exact selected range, showing broader recent history.
+                    </div>
+                  ) : null}
                 </div>
               )}
             </div>

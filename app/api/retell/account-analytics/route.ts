@@ -114,55 +114,72 @@ export async function GET(req: Request) {
     const startMs = parseEpochMs(searchParams.get("startMs"), now - 30 * 24 * 60 * 60 * 1000);
     const endMs = parseEpochMs(searchParams.get("endMs"), now);
 
-    // Retell expects start_timestamp filter as OBJECT (thresholds), not a number.
-    // See List Calls filter_criteria.start_timestamp. :contentReference[oaicite:2]{index=2}
-    const calls: RetellCall[] = [];
-    let paginationKey: string | undefined = undefined;
+    async function fetchCallsInRange(rangeStartMs: number, rangeEndMs: number) {
+      const acc: RetellCall[] = [];
+      let paginationKey: string | undefined = undefined;
 
-    // Pull up to ~1000 calls safely (10 pages * 100).
-    for (let page = 0; page < 10; page++) {
-      const body: any = {
-        filter_criteria: {
-          start_timestamp: {
-            lower_threshold: startMs,
-            upper_threshold: endMs,
+      for (let page = 0; page < 10; page++) {
+        const body: any = {
+          filter_criteria: {
+            start_timestamp: {
+              lower_threshold: rangeStartMs,
+              upper_threshold: rangeEndMs,
+            },
           },
-        },
-        limit: 100,
-      };
-      if (paginationKey) body.pagination_key = paginationKey;
+          limit: 100,
+        };
+        if (paginationKey) body.pagination_key = paginationKey;
 
-      const r = await fetch("https://api.retellai.com/v2/list-calls", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(body),
-      });
+        const r = await fetch("https://api.retellai.com/v2/list-calls", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(body),
+        });
 
-      if (!r.ok) {
-        const details = await r.text();
-        return NextResponse.json(
-          { error: `Retell API error: ${r.status}`, details },
-          { status: 500 }
-        );
+        if (!r.ok) {
+          const details = await r.text();
+          throw new Error(`Retell API error: ${r.status} ${details}`);
+        }
+
+        const json: any = await r.json();
+        const batch: RetellCall[] = Array.isArray(json?.calls) ? json.calls : [];
+        acc.push(...batch);
+
+        if (batch.length < 100) break;
+        paginationKey = json?.pagination_key || json?.next_pagination_key || undefined;
+        if (!paginationKey) break;
       }
 
-      const json: any = await r.json();
-      const batch: RetellCall[] = Array.isArray(json?.calls) ? json.calls : [];
+      return acc;
+    }
 
-      calls.push(...batch);
+    let effectiveStartMs = startMs;
+    const effectiveEndMs = endMs;
+    let calls: RetellCall[] = [];
+    try {
+      calls = await fetchCallsInRange(startMs, endMs);
+    } catch (e: any) {
+      return NextResponse.json(
+        { error: "Retell list-calls failed", details: e?.message || "unknown" },
+        { status: 500 }
+      );
+    }
 
-      // If fewer than limit, we’re done.
-      if (batch.length < 100) break;
-
-      // pagination_key is typically the last call_id in response.
-      // If Retell returns a pagination_key directly, use it; otherwise fallback.
-      paginationKey = json?.pagination_key || json?.next_pagination_key || undefined;
-
-      // If no key is provided, stop to avoid infinite loop.
-      if (!paginationKey) break;
+    // If selected range is empty, auto-expand to reduce zero-only dashboards.
+    if (calls.length === 0 && searchParams.get("autoExpand") !== "0") {
+      const fallbackStart = Date.now() - 365 * 24 * 60 * 60 * 1000;
+      try {
+        const expanded = await fetchCallsInRange(fallbackStart, endMs);
+        if (expanded.length > 0) {
+          calls = expanded;
+          effectiveStartMs = fallbackStart;
+        }
+      } catch {
+        // keep the original empty result if fallback fails
+      }
     }
 
     const totalCalls = calls.length;
@@ -199,7 +216,7 @@ export async function GET(req: Request) {
     const avgLatencyMs = latencyCount ? latencySum / latencyCount : null;
 
     return NextResponse.json({
-      range: { startMs, endMs },
+      range: { startMs: effectiveStartMs, endMs: effectiveEndMs },
       totals: {
         totalCalls,
         successful,
@@ -211,6 +228,10 @@ export async function GET(req: Request) {
       breakdowns: {
         disconnectionReasons,
         userSentiments,
+      },
+      meta: {
+        requestedRange: { startMs, endMs },
+        autoExpanded: effectiveStartMs !== startMs,
       },
     });
   } catch (e: any) {
