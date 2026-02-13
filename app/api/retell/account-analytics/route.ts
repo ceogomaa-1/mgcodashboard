@@ -89,12 +89,18 @@ export async function GET(req: Request) {
     }
 
     // Client-specific key only (no platform/master fallback).
-    const apiKey = (
+    const apiKeyFromClient = (
       (integration as any)?.retell_api_key ||
       ""
     )
       .toString()
       .trim();
+    const apiKeyFromLegacyField = ((integration as any)?.retell_agent_id || "").toString().trim();
+    const apiKey = apiKeyFromClient.startsWith("key_")
+      ? apiKeyFromClient
+      : apiKeyFromLegacyField.startsWith("key_")
+      ? apiKeyFromLegacyField
+      : "";
 
     if (!apiKey || typeof apiKey !== "string" || !apiKey.startsWith("key_")) {
       return NextResponse.json(
@@ -107,8 +113,6 @@ export async function GET(req: Request) {
     const now = Date.now();
     const startMs = parseEpochMs(searchParams.get("startMs"), now - 30 * 24 * 60 * 60 * 1000);
     const endMs = parseEpochMs(searchParams.get("endMs"), now);
-    const startSec = Math.floor(startMs / 1000);
-    const endSec = Math.floor(endMs / 1000);
 
     // Retell expects start_timestamp filter as OBJECT (thresholds), not a number.
     // See List Calls filter_criteria.start_timestamp. :contentReference[oaicite:2]{index=2}
@@ -120,8 +124,8 @@ export async function GET(req: Request) {
       const body: any = {
         filter_criteria: {
           start_timestamp: {
-            lower_threshold: startSec,
-            upper_threshold: endSec,
+            lower_threshold: startMs,
+            upper_threshold: endMs,
           },
         },
         limit: 100,

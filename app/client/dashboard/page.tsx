@@ -97,6 +97,30 @@ function topEntries(obj: Record<string, number>, n = 6) {
     .slice(0, n);
 }
 
+function toDateInputValue(d: Date) {
+  const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 10);
+}
+
+function rangeFromPreset(preset: "7d" | "30d" | "90d") {
+  const end = new Date();
+  const start = new Date();
+  const days = preset === "7d" ? 7 : preset === "90d" ? 90 : 30;
+  start.setDate(end.getDate() - (days - 1));
+  return {
+    startDate: toDateInputValue(start),
+    endDate: toDateInputValue(end),
+  };
+}
+
+function dayStartMs(input: string) {
+  return new Date(`${input}T00:00:00`).getTime();
+}
+
+function dayEndMs(input: string) {
+  return new Date(`${input}T23:59:59.999`).getTime();
+}
+
 export default function ClientDashboardPage() {
   const router = useRouter();
   const supabase = useMemo(() => createClient(), []);
@@ -114,6 +138,9 @@ export default function ClientDashboardPage() {
   const [retellStats, setRetellStats] = useState<RetellAnalytics | null>(null);
   const [retellLoading, setRetellLoading] = useState(false);
   const [retellError, setRetellError] = useState<string | null>(null);
+  const [retellPreset, setRetellPreset] = useState<"7d" | "30d" | "90d" | "custom">("30d");
+  const [retellStartDate, setRetellStartDate] = useState(() => rangeFromPreset("30d").startDate);
+  const [retellEndDate, setRetellEndDate] = useState(() => rangeFromPreset("30d").endDate);
 
   const clientId = client?.id || "";
   const monthLabel = useMemo(() => formatMonthLabel(month), [month]);
@@ -179,13 +206,21 @@ export default function ClientDashboardPage() {
   }
 
   // RETELL (updated endpoint + error handling)
-  async function refreshRetell(cid: string) {
+  async function refreshRetell(cid: string, startMs?: number, endMs?: number) {
     if (!cid) return;
     setRetellLoading(true);
     setRetellError(null);
 
     try {
-      const res = await fetch(`/api/retell/account-analytics?clientId=${encodeURIComponent(cid)}`, {
+      const params = new URLSearchParams();
+      params.set("clientId", cid);
+      if (typeof startMs === "number" && Number.isFinite(startMs)) {
+        params.set("startMs", String(Math.floor(startMs)));
+      }
+      if (typeof endMs === "number" && Number.isFinite(endMs)) {
+        params.set("endMs", String(Math.floor(endMs)));
+      }
+      const res = await fetch(`/api/retell/account-analytics?${params.toString()}`, {
         cache: "no-store",
       });
 
@@ -203,6 +238,32 @@ export default function ClientDashboardPage() {
       setRetellStats(null);
       setRetellError(e?.message || "Failed to load analytics.");
       setRetellLoading(false);
+    }
+  }
+
+  function currentRetellRangeMs() {
+    const startMs = dayStartMs(retellStartDate);
+    const endMs = dayEndMs(retellEndDate);
+    return { startMs, endMs };
+  }
+
+  function applyRetellRange() {
+    if (!clientId) return;
+    const { startMs, endMs } = currentRetellRangeMs();
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || startMs > endMs) {
+      setRetellError("Invalid date range.");
+      return;
+    }
+    refreshRetell(clientId, startMs, endMs);
+  }
+
+  function onRetellPreset(preset: "7d" | "30d" | "90d") {
+    setRetellPreset(preset);
+    const r = rangeFromPreset(preset);
+    setRetellStartDate(r.startDate);
+    setRetellEndDate(r.endDate);
+    if (clientId) {
+      refreshRetell(clientId, dayStartMs(r.startDate), dayEndMs(r.endDate));
     }
   }
 
@@ -246,11 +307,15 @@ export default function ClientDashboardPage() {
 
     setIntegration((intRow as any) || null);
     setLoading(false);
+    const initialRange = currentRetellRangeMs();
 
     if (!intRow?.google_calendar_embed_url) {
-      await Promise.all([refreshCalendar(clientRow.id, month), refreshRetell(clientRow.id)]);
+      await Promise.all([
+        refreshCalendar(clientRow.id, month),
+        refreshRetell(clientRow.id, initialRange.startMs, initialRange.endMs),
+      ]);
     } else {
-      await Promise.all([refreshRetell(clientRow.id)]);
+      await Promise.all([refreshRetell(clientRow.id, initialRange.startMs, initialRange.endMs)]);
     }
   }
 
@@ -556,11 +621,74 @@ export default function ClientDashboardPage() {
                 </div>
                 <Button
                   variant="secondary"
-                  onClick={() => refreshRetell(clientId)}
+                  onClick={applyRetellRange}
                   disabled={!integration?.retell_connected || retellLoading}
                 >
                   {retellLoading ? "Loading…" : "Refresh"}
                 </Button>
+              </div>
+
+              <div className="mt-4 flex flex-wrap items-end gap-2">
+                <button
+                  onClick={() => onRetellPreset("7d")}
+                  className={`px-3 py-2 rounded-lg text-sm border ${
+                    retellPreset === "7d"
+                      ? "border-white/30 bg-white/20"
+                      : "border-white/10 bg-white/5 hover:bg-white/10"
+                  }`}
+                  disabled={!integration?.retell_connected || retellLoading}
+                >
+                  7D
+                </button>
+                <button
+                  onClick={() => onRetellPreset("30d")}
+                  className={`px-3 py-2 rounded-lg text-sm border ${
+                    retellPreset === "30d"
+                      ? "border-white/30 bg-white/20"
+                      : "border-white/10 bg-white/5 hover:bg-white/10"
+                  }`}
+                  disabled={!integration?.retell_connected || retellLoading}
+                >
+                  30D
+                </button>
+                <button
+                  onClick={() => onRetellPreset("90d")}
+                  className={`px-3 py-2 rounded-lg text-sm border ${
+                    retellPreset === "90d"
+                      ? "border-white/30 bg-white/20"
+                      : "border-white/10 bg-white/5 hover:bg-white/10"
+                  }`}
+                  disabled={!integration?.retell_connected || retellLoading}
+                >
+                  90D
+                </button>
+                <input
+                  type="date"
+                  value={retellStartDate}
+                  onChange={(e) => {
+                    setRetellPreset("custom");
+                    setRetellStartDate(e.target.value);
+                  }}
+                  className="px-3 py-2 rounded-lg text-sm border border-white/10 bg-white/5"
+                  disabled={!integration?.retell_connected || retellLoading}
+                />
+                <input
+                  type="date"
+                  value={retellEndDate}
+                  onChange={(e) => {
+                    setRetellPreset("custom");
+                    setRetellEndDate(e.target.value);
+                  }}
+                  className="px-3 py-2 rounded-lg text-sm border border-white/10 bg-white/5"
+                  disabled={!integration?.retell_connected || retellLoading}
+                />
+                <button
+                  onClick={applyRetellRange}
+                  className="px-3 py-2 rounded-lg text-sm border border-white/15 bg-white/10 hover:bg-white/15"
+                  disabled={!integration?.retell_connected || retellLoading}
+                >
+                  Apply
+                </button>
               </div>
 
               {!integration?.retell_connected ? (
