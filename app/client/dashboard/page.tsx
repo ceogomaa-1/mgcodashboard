@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { createClient } from "@/lib/supabase/client";
+import { AIReceptionistSection } from "@/components/client/ai-receptionist-section";
 
 // Helpers
 function startOfMonth(d: Date) {
@@ -239,9 +240,9 @@ export default function ClientDashboardPage() {
 
       setRetellStats(JSON.parse(text));
       setRetellLoading(false);
-    } catch (e: any) {
+    } catch (e: unknown) {
       setRetellStats(null);
-      setRetellError(e?.message || "Failed to load analytics.");
+      setRetellError(e instanceof Error ? e.message : "Failed to load analytics.");
       setRetellLoading(false);
     }
   }
@@ -301,7 +302,7 @@ export default function ClientDashboardPage() {
       return;
     }
 
-    setClient(clientRow as any);
+    setClient(clientRow as ClientRow);
 
     const { data: intRow } = await supabase
       .from("integrations")
@@ -310,7 +311,7 @@ export default function ClientDashboardPage() {
       .limit(1)
       .maybeSingle();
 
-    setIntegration((intRow as any) || null);
+    setIntegration((intRow as IntegrationRow) || null);
     setLoading(false);
     const initialRange = currentRetellRangeMs();
 
@@ -784,6 +785,8 @@ export default function ClientDashboardPage() {
                 </div>
               )}
             </div>
+
+            <AIReceptionistSection clientId={client.id} />
           </>
         ) : null}
       </div>

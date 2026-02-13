@@ -70,8 +70,8 @@ export default function TechOpsDashboardPage() {
       const json = await res.json();
       const list = Array.isArray(json) ? json : Array.isArray(json?.clients) ? json.clients : [];
       setClients(list);
-    } catch (e: any) {
-      setError(e?.message || "Failed to load clients");
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Failed to load clients");
       setClients([]);
     } finally {
       setLoading(false);
@@ -98,8 +98,8 @@ export default function TechOpsDashboardPage() {
       }
 
       await load();
-    } catch (e: any) {
-      alert(e?.message || "Delete failed");
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : "Delete failed");
     }
   }
 
@@ -139,6 +139,9 @@ export default function TechOpsDashboardPage() {
           <div className="flex items-center gap-2">
             <Button variant="secondary" onClick={load}>
               Refresh
+            </Button>
+            <Button variant="secondary" onClick={() => router.push("/techops/ai-agent-playground")}>
+              AI Agent Playground
             </Button>
             <Button onClick={() => router.push("/techops/clients/new")}>+ Add Client</Button>
           </div>
