@@ -11,7 +11,7 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const auth = await requireTechOps();
-  if ("error" in auth) return bad(auth.error, auth.status);
+  if (!auth.ok) return bad(auth.error, auth.status);
 
   const { id } = await params;
   const { data, error } = await supabaseAdmin
@@ -31,7 +31,7 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const auth = await requireTechOps();
-  if ("error" in auth) return bad(auth.error, auth.status);
+  if (!auth.ok) return bad(auth.error, auth.status);
 
   const { id } = await params;
   const body = await req.json().catch(() => null);

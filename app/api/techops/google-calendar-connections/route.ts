@@ -4,7 +4,7 @@ import { requireTechOps } from "@/lib/auth/access";
 
 export async function GET(req: Request) {
   const auth = await requireTechOps();
-  if ("error" in auth) {
+  if (!auth.ok) {
     return NextResponse.json({ error: auth.error }, { status: auth.status });
   }
 

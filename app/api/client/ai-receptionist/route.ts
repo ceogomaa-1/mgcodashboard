@@ -4,7 +4,7 @@ import { getClientByAuthEmail } from "@/lib/auth/access";
 
 export async function GET() {
   const auth = await getClientByAuthEmail();
-  if ("error" in auth) {
+  if (!auth.ok) {
     return NextResponse.json({ error: auth.error }, { status: auth.status });
   }
 

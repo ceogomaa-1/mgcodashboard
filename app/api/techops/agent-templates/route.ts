@@ -8,7 +8,7 @@ function bad(message: string, status = 400) {
 
 export async function GET() {
   const auth = await requireTechOps();
-  if ("error" in auth) return bad(auth.error, auth.status);
+  if (!auth.ok) return bad(auth.error, auth.status);
 
   const { data, error } = await supabaseAdmin
     .from("agent_templates")
@@ -21,7 +21,7 @@ export async function GET() {
 
 export async function POST(req: Request) {
   const auth = await requireTechOps();
-  if ("error" in auth) return bad(auth.error, auth.status);
+  if (!auth.ok) return bad(auth.error, auth.status);
 
   const body = await req.json().catch(() => null);
   if (!body) return bad("Invalid JSON body");

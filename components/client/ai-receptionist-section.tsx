@@ -128,7 +128,7 @@ export function AIReceptionistSection({ clientId }: { clientId: string }) {
             setEvents((current) => [
               ...current,
               {
-                id: row.id,
+                id: String(row.id),
                 call_id: row.call_id || "",
                 type: row.type || "tool_result",
                 payload: row.payload || {},

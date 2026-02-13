@@ -4,7 +4,7 @@ import { listTwilioNumbers } from "@/lib/twilio/api";
 
 export async function GET() {
   const auth = await requireTechOps();
-  if ("error" in auth) {
+  if (!auth.ok) {
     return NextResponse.json({ error: auth.error }, { status: auth.status });
   }
 
