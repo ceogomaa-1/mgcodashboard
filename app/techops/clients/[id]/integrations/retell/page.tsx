@@ -2,16 +2,15 @@
 
 import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase/client';
-import { useRouter, useParams } from 'next/navigation';
+import { useParams } from 'next/navigation';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { ArrowLeft, PhoneCall, AlertCircle, Loader2, CheckCircle, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, PhoneCall, AlertCircle, Loader2, CheckCircle } from 'lucide-react';
 import Link from 'next/link';
 
 export default function ConnectRetell() {
-  const router = useRouter();
   const params = useParams();
   const clientId = Array.isArray(params.id) ? params.id[0] : params.id;
 
@@ -20,28 +19,18 @@ export default function ConnectRetell() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
-  const [apiKeyMissing, setApiKeyMissing] = useState(false);
 
   const [clientName, setClientName] = useState('');
   const [isConnected, setIsConnected] = useState(false);
 
   const [formData, setFormData] = useState({
+    retell_api_key: '',
     retell_agent_id: '',
-    retell_phone_number: '',
   });
 
   useEffect(() => {
     const fetchData = async () => {
       try {
-        // Check master API key exists
-        const { data: settingsData } = await supabase
-          .from('platform_settings')
-          .select('value')
-          .eq('key', 'retell_api_key')
-          .maybeSingle();
-
-        if (!settingsData?.value) setApiKeyMissing(true);
-
         // Client name
         const { data: client } = await supabase
           .from('clients')
@@ -61,8 +50,8 @@ export default function ConnectRetell() {
         if (integration) {
           setIsConnected(!!integration.retell_connected);
           setFormData({
+            retell_api_key: integration.retell_api_key || '',
             retell_agent_id: integration.retell_agent_id || '',
-            retell_phone_number: integration.retell_phone_number || '',
           });
         } else {
           setIsConnected(false);
@@ -88,8 +77,17 @@ export default function ConnectRetell() {
     setSuccess(false);
 
     try {
-      if (apiKeyMissing) {
-        setError('Retell master API key is missing in platform_settings (retell_api_key). Add it first.');
+      const apiKey = formData.retell_api_key.trim();
+      const agentId = formData.retell_agent_id.trim();
+
+      if (!apiKey.startsWith('key_')) {
+        setError('Retell API key must start with "key_".');
+        setSaving(false);
+        return;
+      }
+
+      if (!agentId) {
+        setError('Retell Agent ID is required.');
         setSaving(false);
         return;
       }
@@ -100,8 +98,8 @@ export default function ConnectRetell() {
         .upsert(
           {
             client_id: clientId,
-            retell_agent_id: formData.retell_agent_id,
-            retell_phone_number: formData.retell_phone_number,
+            retell_api_key: apiKey,
+            retell_agent_id: agentId,
             retell_connected: true,
             updated_at: new Date().toISOString(),
           },
@@ -138,6 +136,7 @@ export default function ConnectRetell() {
         .upsert(
           {
             client_id: clientId,
+            retell_api_key: null,
             retell_agent_id: null,
             retell_phone_number: null,
             retell_connected: false,
@@ -148,7 +147,7 @@ export default function ConnectRetell() {
 
       if (error) throw error;
 
-      setFormData({ retell_agent_id: '', retell_phone_number: '' });
+      setFormData({ retell_api_key: '', retell_agent_id: '' });
       setIsConnected(false);
       setSuccess(true);
 
@@ -175,20 +174,6 @@ export default function ConnectRetell() {
       </div>
 
       <div className="container mx-auto px-6 py-8 max-w-3xl space-y-6">
-        {apiKeyMissing && (
-          <Card className="border-red-500/20 bg-red-500/10">
-            <CardHeader>
-              <CardTitle className="text-red-400 flex items-center gap-2">
-                <AlertTriangle className="w-5 h-5" />
-                Retell Master API Key Missing
-              </CardTitle>
-              <CardDescription className="text-red-300/80">
-                Add platform_settings.retell_api_key first, then connect agents.
-              </CardDescription>
-            </CardHeader>
-          </Card>
-        )}
-
         <Card className="border-white/5 bg-white/[0.02]">
           <CardHeader>
             <CardTitle className="text-white flex items-center gap-2">
@@ -196,7 +181,7 @@ export default function ConnectRetell() {
               Retell AI • {clientName || 'Client'}
             </CardTitle>
             <CardDescription className="text-gray-500">
-              {isConnected ? 'Connected — update details or disconnect.' : 'Connect the client’s Retell agent.'}
+              {isConnected ? 'Connected. Update API key or agent ID anytime.' : 'Enter the client Retell API key and agent ID.'}
             </CardDescription>
           </CardHeader>
 
@@ -223,24 +208,25 @@ export default function ConnectRetell() {
 
             <form onSubmit={handleSubmit} className="space-y-5">
               <div className="space-y-2">
+                <Label htmlFor="retell_api_key" className="text-white">Retell API Key *</Label>
+                <Input
+                  id="retell_api_key"
+                  type="password"
+                  value={formData.retell_api_key}
+                  onChange={(e) => handleChange('retell_api_key', e.target.value)}
+                  placeholder="key_xxxxxxxxxxxxx"
+                  className="bg-white/5 border-white/10 text-white placeholder:text-gray-500 font-mono"
+                  required
+                />
+              </div>
+
+              <div className="space-y-2">
                 <Label htmlFor="retell_agent_id" className="text-white">Retell Agent ID *</Label>
                 <Input
                   id="retell_agent_id"
                   value={formData.retell_agent_id}
                   onChange={(e) => handleChange('retell_agent_id', e.target.value)}
                   placeholder="agent_xxxxxxxxxxxxx"
-                  className="bg-white/5 border-white/10 text-white placeholder:text-gray-500"
-                  required
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="retell_phone_number" className="text-white">Retell Phone Number *</Label>
-                <Input
-                  id="retell_phone_number"
-                  value={formData.retell_phone_number}
-                  onChange={(e) => handleChange('retell_phone_number', e.target.value)}
-                  placeholder="+1416xxxxxxx"
                   className="bg-white/5 border-white/10 text-white placeholder:text-gray-500"
                   required
                 />
@@ -264,7 +250,7 @@ export default function ConnectRetell() {
                 <Button
                   type="submit"
                   className="bg-emerald-500 hover:bg-emerald-600 text-white"
-                  disabled={saving || apiKeyMissing}
+                  disabled={saving}
                 >
                   {saving ? (
                     <>

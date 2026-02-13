@@ -15,6 +15,14 @@ function env(name: string) {
   return v;
 }
 
+function parseEpochMs(input: string | null, fallbackMs: number): number {
+  if (!input) return fallbackMs;
+  const n = Number(input);
+  if (!Number.isFinite(n)) return fallbackMs;
+  // Accept either seconds or milliseconds from callers.
+  return n > 1e12 ? Math.floor(n) : Math.floor(n * 1000);
+}
+
 function pickSentiment(call: RetellCall): string {
   const ca = call.call_analysis || {};
   // Retell docs say call_analysis includes sentiment, but field name may vary.
@@ -80,23 +88,27 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: "Retell not connected" }, { status: 400 });
     }
 
-    // You said you stored the API key in the TechOps field that is currently "Retell Agent ID".
-    const apiKey =
+    // Client-specific key only (no platform/master fallback).
+    const apiKey = (
       (integration as any)?.retell_api_key ||
-      (integration as any)?.retell_agent_id ||
-      "";
+      ""
+    )
+      .toString()
+      .trim();
 
-    if (!apiKey || typeof apiKey !== "string") {
+    if (!apiKey || typeof apiKey !== "string" || !apiKey.startsWith("key_")) {
       return NextResponse.json(
-        { error: "Missing Retell API key in integrations" },
+        { error: "Missing or invalid Retell API key in integrations.retell_api_key" },
         { status: 400 }
       );
     }
 
     // Default date range: last 30 days (like a typical analytics default)
     const now = Date.now();
-    const startMs = Number(searchParams.get("startMs") || now - 30 * 24 * 60 * 60 * 1000);
-    const endMs = Number(searchParams.get("endMs") || now);
+    const startMs = parseEpochMs(searchParams.get("startMs"), now - 30 * 24 * 60 * 60 * 1000);
+    const endMs = parseEpochMs(searchParams.get("endMs"), now);
+    const startSec = Math.floor(startMs / 1000);
+    const endSec = Math.floor(endMs / 1000);
 
     // Retell expects start_timestamp filter as OBJECT (thresholds), not a number.
     // See List Calls filter_criteria.start_timestamp. :contentReference[oaicite:2]{index=2}
@@ -108,8 +120,8 @@ export async function GET(req: Request) {
       const body: any = {
         filter_criteria: {
           start_timestamp: {
-            lower_threshold: startMs,
-            upper_threshold: endMs,
+            lower_threshold: startSec,
+            upper_threshold: endSec,
           },
         },
         limit: 100,
