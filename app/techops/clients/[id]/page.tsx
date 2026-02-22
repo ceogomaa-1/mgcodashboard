@@ -43,6 +43,15 @@ type WeeklyReport = {
   created_at: string;
 };
 
+type ClientReport = {
+  id: string;
+  client_id: string;
+  file_name: string;
+  mime_type: string | null;
+  size_bytes: number | null;
+  created_at: string;
+};
+
 type IntegrationView = {
   retell_connected?: boolean;
   retell_agent_id?: string | null;
@@ -144,6 +153,10 @@ export default function TechOpsClientDetails() {
   const [weekStart, setWeekStart] = useState('');
   const [weekEnd, setWeekEnd] = useState('');
   const [weeklyFile, setWeeklyFile] = useState<File | null>(null);
+  const [clientReports, setClientReports] = useState<ClientReport[]>([]);
+  const [reportFiles, setReportFiles] = useState<File[]>([]);
+  const [reportsMsg, setReportsMsg] = useState<string | null>(null);
+  const [uploadingReports, setUploadingReports] = useState(false);
 
   useEffect(() => {
     const fetchClient = async () => {
@@ -206,6 +219,28 @@ export default function TechOpsClientDetails() {
   useEffect(() => {
     if (!clientId) return;
     loadWeeklyReports();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clientId]);
+
+  const loadClientReports = async () => {
+    try {
+      const res = await fetch(`/api/techops/clients/${clientId}/reports`, {
+        cache: 'no-store',
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setReportsMsg(json?.error || 'Failed to load reports.');
+        return;
+      }
+      setClientReports(Array.isArray(json?.reports) ? json.reports : []);
+    } catch (e: unknown) {
+      setReportsMsg(e instanceof Error ? e.message : 'Failed to load reports.');
+    }
+  };
+
+  useEffect(() => {
+    if (!clientId) return;
+    loadClientReports();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clientId]);
 
@@ -277,6 +312,39 @@ export default function TechOpsClientDetails() {
     }
 
     setUploadingWeekly(false);
+  };
+
+  const uploadClientReports = async () => {
+    if (!reportFiles.length) {
+      setReportsMsg('Please select at least one PDF/image file.');
+      return;
+    }
+
+    setUploadingReports(true);
+    setReportsMsg(null);
+    try {
+      const body = new FormData();
+      for (const file of reportFiles) {
+        body.append('files', file);
+      }
+
+      const res = await fetch(`/api/techops/clients/${clientId}/reports`, {
+        method: 'POST',
+        body,
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setReportsMsg(json?.error || 'Upload failed.');
+        setUploadingReports(false);
+        return;
+      }
+      setReportsMsg('Files uploaded successfully.');
+      setReportFiles([]);
+      await loadClientReports();
+    } catch (e: unknown) {
+      setReportsMsg(e instanceof Error ? e.message : 'Upload failed.');
+    }
+    setUploadingReports(false);
   };
 
   const statusBadge = (status: string) => {
@@ -557,6 +625,60 @@ export default function TechOpsClientDetails() {
                 ))
               ) : (
                 <div className="border-t border-white/5 px-3 py-3 text-sm text-white/60">No weekly reports uploaded yet.</div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-white/5 bg-white/[0.02]">
+          <CardHeader>
+            <CardTitle className="text-white text-lg flex items-center gap-2">
+              <FileUp className="h-5 w-5 text-emerald-400" />
+              Upload Client Reports
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <div className="text-xs text-white/60 mb-1">Files (PDF or images)</div>
+                <input
+                  type="file"
+                  accept="application/pdf,image/*,.pdf,.png,.jpg,.jpeg,.webp,.gif"
+                  multiple
+                  className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white file:mr-3 file:rounded-md file:border-0 file:bg-emerald-500 file:px-3 file:py-1 file:text-white"
+                  onChange={(e) => setReportFiles(Array.from(e.target.files || []))}
+                />
+              </div>
+              <div className="flex items-end justify-end">
+                <Button className="bg-emerald-500 hover:bg-emerald-600 text-white" disabled={uploadingReports} onClick={uploadClientReports}>
+                  {uploadingReports ? 'Uploading...' : 'Upload files'}
+                </Button>
+              </div>
+            </div>
+
+            <div className="text-sm text-white/70">
+              Clients will immediately see uploaded reports in their dashboard and can download them.
+            </div>
+            {reportsMsg ? <div className="text-sm text-white/70">{reportsMsg}</div> : null}
+
+            <div className="rounded-xl border border-white/10 bg-black/20">
+              <div className="grid grid-cols-12 px-3 py-2 text-xs uppercase tracking-wide text-white/50">
+                <div className="col-span-6">File</div>
+                <div className="col-span-2">Type</div>
+                <div className="col-span-2">Size</div>
+                <div className="col-span-2 text-right">Uploaded</div>
+              </div>
+              {clientReports.length ? (
+                clientReports.map((report) => (
+                  <div key={report.id} className="grid grid-cols-12 items-center border-t border-white/5 px-3 py-2 text-sm text-white/80">
+                    <div className="col-span-6 truncate">{report.file_name}</div>
+                    <div className="col-span-2">{report.mime_type || '—'}</div>
+                    <div className="col-span-2">{report.size_bytes ? `${Math.ceil(report.size_bytes / 1024)} KB` : '—'}</div>
+                    <div className="col-span-2 text-right">{new Date(report.created_at).toLocaleDateString()}</div>
+                  </div>
+                ))
+              ) : (
+                <div className="border-t border-white/5 px-3 py-3 text-sm text-white/60">No reports uploaded yet.</div>
               )}
             </div>
           </CardContent>
