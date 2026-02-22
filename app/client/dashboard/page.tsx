@@ -95,6 +95,15 @@ type WeeklyReport = {
   } | null;
 };
 
+type ClientReport = {
+  id: string;
+  file_name: string;
+  mime_type: string | null;
+  size_bytes: number | null;
+  created_at: string;
+  download_url: string | null;
+};
+
 function chartPointMax(points: Array<{ value: number }>) {
   const max = points.reduce((acc, item) => Math.max(acc, item.value), 0);
   return max > 0 ? max : 1;
@@ -116,6 +125,8 @@ export default function ClientDashboardPage() {
   const [weeklyReport, setWeeklyReport] = useState<WeeklyReport | null>(null);
   const [weeklyLoading, setWeeklyLoading] = useState(false);
   const [weeklyError, setWeeklyError] = useState<string | null>(null);
+  const [clientReports, setClientReports] = useState<ClientReport[]>([]);
+  const [clientReportsError, setClientReportsError] = useState<string | null>(null);
 
   const clientId = client?.id || "";
   const monthLabel = useMemo(() => formatMonthLabel(month), [month]);
@@ -207,6 +218,27 @@ export default function ClientDashboardPage() {
     }
   }
 
+  async function refreshClientReports(cid: string) {
+    if (!cid) return;
+    setClientReportsError(null);
+    try {
+      const res = await fetch("/api/client/reports", {
+        cache: "no-store",
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        setClientReports([]);
+        setClientReportsError(text || `Failed (${res.status})`);
+        return;
+      }
+      const json = await res.json();
+      setClientReports(Array.isArray(json?.reports) ? json.reports : []);
+    } catch (e: unknown) {
+      setClientReports([]);
+      setClientReportsError(e instanceof Error ? e.message : "Failed to load client reports.");
+    }
+  }
+
   async function loadMeAndClient() {
     setLoading(true);
 
@@ -252,9 +284,10 @@ export default function ClientDashboardPage() {
       await Promise.all([
         refreshCalendar(clientRow.id, month),
         refreshWeeklyAnalysis(clientRow.id),
+        refreshClientReports(clientRow.id),
       ]);
     } else {
-      await Promise.all([refreshWeeklyAnalysis(clientRow.id)]);
+      await Promise.all([refreshWeeklyAnalysis(clientRow.id), refreshClientReports(clientRow.id)]);
     }
   }
 
@@ -562,7 +595,9 @@ export default function ClientDashboardPage() {
                 </div>
                 <Button
                   variant="secondary"
-                  onClick={() => refreshWeeklyAnalysis(clientId)}
+                  onClick={() =>
+                    Promise.all([refreshWeeklyAnalysis(clientId), refreshClientReports(clientId)])
+                  }
                   disabled={weeklyLoading}
                 >
                   {weeklyLoading ? "Loading…" : "Refresh"}
@@ -575,8 +610,50 @@ export default function ClientDashboardPage() {
                   <span className="opacity-80 break-all">{weeklyError}</span>
                 </div>
               ) : !weeklyReport ? (
-                <div className="mt-6 text-sm opacity-70">
-                  No weekly PDF analytics uploaded yet. TechOps will upload your weekly report soon.
+                <div className="mt-6 space-y-4">
+                  <div className="text-sm opacity-70">
+                    No weekly PDF analytics uploaded yet. You can still download shared report files
+                    below.
+                  </div>
+                  {clientReportsError ? (
+                    <div className="text-sm text-red-300">
+                      Failed to load shared reports.{" "}
+                      <span className="opacity-80 break-all">{clientReportsError}</span>
+                    </div>
+                  ) : clientReports.length ? (
+                    <div className="rounded-xl border border-white/10 bg-black/20">
+                      <div className="grid grid-cols-12 px-3 py-2 text-xs uppercase tracking-wide text-white/50">
+                        <div className="col-span-6">File</div>
+                        <div className="col-span-3">Uploaded</div>
+                        <div className="col-span-3 text-right">Action</div>
+                      </div>
+                      {clientReports.map((report) => (
+                        <div
+                          key={report.id}
+                          className="grid grid-cols-12 items-center border-t border-white/5 px-3 py-3 text-sm text-white/85"
+                        >
+                          <div className="col-span-6 truncate">{report.file_name}</div>
+                          <div className="col-span-3">
+                            {new Date(report.created_at).toLocaleDateString()}
+                          </div>
+                          <div className="col-span-3 text-right">
+                            {report.download_url ? (
+                              <a
+                                href={report.download_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-block rounded-lg border border-white/15 bg-white/10 px-3 py-1.5 text-xs hover:bg-white/15"
+                              >
+                                Download
+                              </a>
+                            ) : (
+                              <span className="text-xs opacity-60">Unavailable</span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
               ) : (
                 <div className="mt-6">
@@ -660,6 +737,46 @@ export default function ClientDashboardPage() {
                           <li key={`${idx}-${item}`}>• {item}</li>
                         ))}
                       </ul>
+                    </div>
+                  ) : null}
+
+                  {clientReportsError ? (
+                    <div className="mt-6 text-sm text-red-300">
+                      Failed to load shared reports.{" "}
+                      <span className="opacity-80 break-all">{clientReportsError}</span>
+                    </div>
+                  ) : clientReports.length ? (
+                    <div className="mt-6 rounded-xl border border-white/10 bg-black/20">
+                      <div className="grid grid-cols-12 px-3 py-2 text-xs uppercase tracking-wide text-white/50">
+                        <div className="col-span-6">File</div>
+                        <div className="col-span-3">Uploaded</div>
+                        <div className="col-span-3 text-right">Action</div>
+                      </div>
+                      {clientReports.map((report) => (
+                        <div
+                          key={report.id}
+                          className="grid grid-cols-12 items-center border-t border-white/5 px-3 py-3 text-sm text-white/85"
+                        >
+                          <div className="col-span-6 truncate">{report.file_name}</div>
+                          <div className="col-span-3">
+                            {new Date(report.created_at).toLocaleDateString()}
+                          </div>
+                          <div className="col-span-3 text-right">
+                            {report.download_url ? (
+                              <a
+                                href={report.download_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-block rounded-lg border border-white/15 bg-white/10 px-3 py-1.5 text-xs hover:bg-white/15"
+                              >
+                                Download
+                              </a>
+                            ) : (
+                              <span className="text-xs opacity-60">Unavailable</span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   ) : null}
                 </div>
