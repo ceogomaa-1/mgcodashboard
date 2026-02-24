@@ -10,7 +10,7 @@ export async function GET() {
 
   const { data: listings, error } = await supabaseAdmin
     .from("listings")
-    .select("id,status,created_at")
+    .select("id,status,created_at,address,caption")
     .eq("client_id", guard.client.id)
     .order("created_at", { ascending: false });
 

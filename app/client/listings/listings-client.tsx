@@ -9,6 +9,25 @@ type ListingRow = {
   status: string | null;
   created_at: string;
   address?: string | null;
+  caption?: string | null;
+};
+
+type ListingFile = {
+  id: string;
+  file_path: string;
+  file_type: string;
+  url: string;
+};
+
+type ListingDetails = {
+  listing: {
+    id: string;
+    status: string | null;
+    created_at: string;
+    address?: string | null;
+    caption?: string | null;
+  };
+  files: ListingFile[];
 };
 
 type ListingsClientProps = {
@@ -18,6 +37,11 @@ type ListingsClientProps = {
     industry: string | null;
   };
 };
+
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error) return error.message;
+  return "Unknown error";
+}
 
 function formatDate(value: string) {
   try {
@@ -42,6 +66,9 @@ export default function ListingsClient({ client }: ListingsClientProps) {
   const [submitting, setSubmitting] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadSuccess, setUploadSuccess] = useState<string | null>(null);
+  const [activeListing, setActiveListing] = useState<ListingDetails | null>(null);
+  const [activeLoading, setActiveLoading] = useState(false);
+  const [activeError, setActiveError] = useState<string | null>(null);
 
   async function loadListings() {
     setLoading(true);
@@ -59,15 +86,18 @@ export default function ListingsClient({ client }: ListingsClientProps) {
       const json = await res.json();
       setListings(Array.isArray(json?.listings) ? json.listings : []);
       setLoading(false);
-    } catch (e: any) {
-      setLoadError(e?.message || "Failed to load listings.");
+    } catch (e: unknown) {
+      setLoadError(getErrorMessage(e) || "Failed to load listings.");
       setListings([]);
       setLoading(false);
     }
   }
 
   useEffect(() => {
-    loadListings();
+    const timer = setTimeout(() => {
+      void loadListings();
+    }, 0);
+    return () => clearTimeout(timer);
   }, []);
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
@@ -97,10 +127,39 @@ export default function ListingsClient({ client }: ListingsClientProps) {
       form.reset();
       await loadListings();
       setSubmitting(false);
-    } catch (err: any) {
-      setUploadError(err?.message || "Upload failed.");
+    } catch (err: unknown) {
+      setUploadError(getErrorMessage(err) || "Upload failed.");
       setSubmitting(false);
     }
+  }
+
+  async function viewListing(listingId: string) {
+    setActiveError(null);
+    setActiveLoading(true);
+    setActiveListing(null);
+    try {
+      const res = await fetch(`/api/listings/${encodeURIComponent(listingId)}`, {
+        cache: "no-store",
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        setActiveError(text || `Failed (${res.status})`);
+        setActiveLoading(false);
+        return;
+      }
+      const json = await res.json();
+      setActiveListing(json as ListingDetails);
+      setActiveLoading(false);
+    } catch (err: unknown) {
+      setActiveError(getErrorMessage(err) || "Failed to load listing details.");
+      setActiveLoading(false);
+    }
+  }
+
+  function closeModal() {
+    setActiveListing(null);
+    setActiveError(null);
+    setActiveLoading(false);
   }
 
   return (
@@ -202,7 +261,10 @@ export default function ListingsClient({ client }: ListingsClientProps) {
                         <td className="py-3 pr-3">{formatDate(l.created_at)}</td>
                         <td className="py-3 pr-3">
                           <div className="flex items-center gap-2">
-                            <button className="rounded-md border border-white/10 px-2 py-1 text-xs opacity-80 hover:opacity-100">
+                            <button
+                              onClick={() => viewListing(l.id)}
+                              className="rounded-md border border-white/10 px-2 py-1 text-xs opacity-80 hover:opacity-100"
+                            >
                               View
                             </button>
                             <button className="rounded-md border border-white/10 px-2 py-1 text-xs opacity-80 hover:opacity-100">
@@ -222,6 +284,83 @@ export default function ListingsClient({ client }: ListingsClientProps) {
           </div>
         </div>
       </div>
+
+      {(activeLoading || activeError || activeListing) && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-4xl max-h-[88vh] overflow-y-auto rounded-2xl border border-white/10 bg-[#090b0f] p-6">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-xl font-semibold">Listing Preview</div>
+                <div className="text-sm opacity-70">
+                  {activeListing?.listing.address || "Address not available"}
+                </div>
+              </div>
+              <button
+                onClick={closeModal}
+                className="rounded-md border border-white/10 px-3 py-1 text-xs opacity-80 hover:opacity-100"
+              >
+                Close
+              </button>
+            </div>
+
+            {activeLoading ? (
+              <div className="mt-6 text-sm opacity-70">Loading preview...</div>
+            ) : activeError ? (
+              <div className="mt-6 text-sm text-red-300 break-all">{activeError}</div>
+            ) : activeListing ? (
+              <>
+                <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {activeListing.files.map((file) => {
+                    const isImage = file.file_type === "photo";
+                    const isPdf = file.file_path.toLowerCase().endsWith(".pdf");
+                    return (
+                      <div
+                        key={file.id}
+                        className="rounded-xl border border-white/10 bg-black/30 p-3"
+                      >
+                        <div className="text-xs uppercase opacity-60 mb-2">{file.file_type}</div>
+                        {isImage ? (
+                          <img
+                            src={file.url}
+                            alt="Listing asset"
+                            className="w-full h-52 object-cover rounded-lg border border-white/10"
+                          />
+                        ) : isPdf ? (
+                          <iframe
+                            title={file.file_path}
+                            src={file.url}
+                            className="w-full h-52 rounded-lg border border-white/10 bg-white"
+                          />
+                        ) : (
+                          <div className="h-52 rounded-lg border border-white/10 bg-white/5 flex items-center justify-center text-sm opacity-80">
+                            Preview not available
+                          </div>
+                        )}
+                        <a
+                          href={file.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="mt-3 inline-block text-xs underline opacity-80 hover:opacity-100"
+                        >
+                          Open file
+                        </a>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="mt-6 rounded-xl border border-white/10 bg-white/5 p-4">
+                  <div className="text-sm uppercase tracking-wide opacity-60">New Listing Caption</div>
+                  <div className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-white/90">
+                    {activeListing.listing.caption ||
+                      "Caption is not ready yet. The n8n workflow may still be processing."}
+                  </div>
+                </div>
+              </>
+            ) : null}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

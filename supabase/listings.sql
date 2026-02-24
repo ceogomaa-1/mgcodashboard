@@ -2,8 +2,15 @@ create table if not exists public.listings (
   id uuid primary key default gen_random_uuid(),
   client_id uuid not null references public.clients(id) on delete cascade,
   status text not null default 'uploaded',
+  address text,
+  caption text,
+  n8n_response jsonb,
   created_at timestamptz not null default now()
 );
+
+alter table public.listings add column if not exists address text;
+alter table public.listings add column if not exists caption text;
+alter table public.listings add column if not exists n8n_response jsonb;
 
 create index if not exists listings_client_id_idx on public.listings (client_id);
 

@@ -4,9 +4,16 @@ import { requireRealEstateClient } from "@/lib/listings/realEstate";
 import { randomUUID } from "crypto";
 
 const BUCKET = "listing-uploads";
+const N8N_WEBHOOK_URL =
+  process.env.N8N_LISTING_WEBHOOK_URL || "http://localhost:5678/webhook-test/mgco/listing-autopilot";
 
 function safeFileName(name: string) {
   return name.replace(/[^a-zA-Z0-9._-]+/g, "-");
+}
+
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error) return error.message;
+  return "Unknown error";
 }
 
 async function uploadToStorage(path: string, file: File) {
@@ -19,6 +26,28 @@ async function uploadToStorage(path: string, file: File) {
   });
 
   if (error) throw new Error(error.message);
+}
+
+function extractCaption(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object") return null;
+  const parsed = payload as {
+    caption?: unknown;
+    listing_caption?: unknown;
+    social_caption?: unknown;
+    result?: { caption?: unknown };
+    data?: { caption?: unknown };
+  };
+  const candidates = [
+    parsed.caption,
+    parsed.listing_caption,
+    parsed.social_caption,
+    parsed.result?.caption,
+    parsed.data?.caption,
+  ];
+  for (const value of candidates) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
 }
 
 export async function POST(req: Request) {
@@ -73,9 +102,9 @@ export async function POST(req: Request) {
       await uploadToStorage(photoPath, p);
       uploadedPaths.push({ path: photoPath, type: "photo" });
     }
-  } catch (err: any) {
+  } catch (err: unknown) {
     await supabaseAdmin.from("listings").update({ status: "error" }).eq("id", listingId);
-    return NextResponse.json({ error: err?.message || "Upload failed." }, { status: 500 });
+    return NextResponse.json({ error: getErrorMessage(err) || "Upload failed." }, { status: 500 });
   }
 
   if (uploadedPaths.length) {
@@ -95,7 +124,7 @@ export async function POST(req: Request) {
 
   await supabaseAdmin.from("listing_logs").insert({
     listing_id: listingId,
-    message: "Listing created",
+    message: "Listing created and files uploaded",
   });
 
   const fileUrls = uploadedPaths.map((u) => {
@@ -103,12 +132,96 @@ export async function POST(req: Request) {
     return { path: u.path, type: u.type, url: data.publicUrl };
   });
 
-  // TODO(n8n): POST /webhook/listing-created with listing_id, client_id, file URLs.
   const n8nPayload = {
     listing_id: listingId,
     client_id: guard.client.id,
     files: fileUrls,
   };
 
-  return NextResponse.json({ listing, files: fileUrls, n8nPayload }, { status: 200 });
+  let n8nResponse: unknown = null;
+  let caption: string | null = null;
+
+  try {
+    const webhookRes = await fetch(N8N_WEBHOOK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(n8nPayload),
+      cache: "no-store",
+    });
+
+    const contentType = webhookRes.headers.get("content-type") || "";
+    if (contentType.includes("application/json")) {
+      n8nResponse = await webhookRes.json();
+    } else {
+      const textBody = await webhookRes.text();
+      n8nResponse = { raw: textBody };
+    }
+
+    if (!webhookRes.ok) {
+      await supabaseAdmin
+        .from("listings")
+        .update({
+          status: "error",
+          n8n_response: n8nResponse,
+        })
+        .eq("id", listingId);
+      await supabaseAdmin.from("listing_logs").insert({
+        listing_id: listingId,
+        message: `n8n webhook failed with status ${webhookRes.status}`,
+      });
+      return NextResponse.json(
+        { error: `n8n webhook failed (${webhookRes.status})`, listing_id: listingId },
+        { status: 502 }
+      );
+    }
+
+    caption = extractCaption(n8nResponse);
+    await supabaseAdmin
+      .from("listings")
+      .update({
+        status: caption ? "draft_ready" : "processing",
+        caption,
+        n8n_response: n8nResponse,
+      })
+      .eq("id", listingId);
+
+    await supabaseAdmin.from("listing_logs").insert({
+      listing_id: listingId,
+      message: "n8n workflow triggered successfully",
+    });
+  } catch (err: unknown) {
+    const details = getErrorMessage(err);
+    await supabaseAdmin
+      .from("listings")
+      .update({
+        status: "error",
+      })
+      .eq("id", listingId);
+    await supabaseAdmin.from("listing_logs").insert({
+      listing_id: listingId,
+      message: `n8n webhook error: ${details}`,
+    });
+    return NextResponse.json(
+      {
+        error: "Files uploaded but n8n webhook failed.",
+        details,
+        listing_id: listingId,
+      },
+      { status: 502 }
+    );
+  }
+
+  return NextResponse.json(
+    {
+      listing: {
+        ...listing,
+        status: caption ? "draft_ready" : "processing",
+        caption,
+      },
+      files: fileUrls,
+      n8nPayload,
+      n8nResponse,
+    },
+    { status: 200 }
+  );
 }
