@@ -69,6 +69,7 @@ export default function ListingsClient({ client }: ListingsClientProps) {
   const [activeListing, setActiveListing] = useState<ListingDetails | null>(null);
   const [activeLoading, setActiveLoading] = useState(false);
   const [activeError, setActiveError] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   async function loadListings() {
     setLoading(true);
@@ -160,6 +161,32 @@ export default function ListingsClient({ client }: ListingsClientProps) {
     setActiveListing(null);
     setActiveError(null);
     setActiveLoading(false);
+  }
+
+  async function deleteListing(listingId: string) {
+    if (deletingId) return;
+    const confirmDelete = window.confirm("Delete this listing and all uploaded files?");
+    if (!confirmDelete) return;
+
+    setDeletingId(listingId);
+    setUploadError(null);
+    try {
+      const res = await fetch(`/api/listings/${encodeURIComponent(listingId)}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        setUploadError(text || `Failed (${res.status})`);
+        setDeletingId(null);
+        return;
+      }
+      if (activeListing?.listing.id === listingId) closeModal();
+      await loadListings();
+      setDeletingId(null);
+    } catch (err: unknown) {
+      setUploadError(getErrorMessage(err) || "Delete failed.");
+      setDeletingId(null);
+    }
   }
 
   return (
@@ -270,8 +297,12 @@ export default function ListingsClient({ client }: ListingsClientProps) {
                             <button className="rounded-md border border-white/10 px-2 py-1 text-xs opacity-80 hover:opacity-100">
                               Re-run
                             </button>
-                            <button className="rounded-md border border-white/10 px-2 py-1 text-xs opacity-80 hover:opacity-100">
-                              Delete
+                            <button
+                              onClick={() => deleteListing(l.id)}
+                              disabled={deletingId === l.id}
+                              className="rounded-md border border-white/10 px-2 py-1 text-xs opacity-80 hover:opacity-100 disabled:opacity-50"
+                            >
+                              {deletingId === l.id ? "Deleting..." : "Delete"}
                             </button>
                           </div>
                         </td>

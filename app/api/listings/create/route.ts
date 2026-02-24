@@ -150,10 +150,16 @@ export async function POST(req: Request) {
     });
 
     const contentType = webhookRes.headers.get("content-type") || "";
-    if (contentType.includes("application/json")) {
-      n8nResponse = await webhookRes.json();
+    const textBody = await webhookRes.text();
+    if (!textBody.trim()) {
+      n8nResponse = null;
+    } else if (contentType.includes("application/json")) {
+      try {
+        n8nResponse = JSON.parse(textBody);
+      } catch {
+        n8nResponse = { raw: textBody };
+      }
     } else {
-      const textBody = await webhookRes.text();
       n8nResponse = { raw: textBody };
     }
 
