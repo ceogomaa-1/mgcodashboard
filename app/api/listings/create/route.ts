@@ -133,9 +133,14 @@ export async function POST(req: Request) {
     return { path: u.path, type: u.type, url: data.publicUrl };
   });
 
+  const mlsPdf = fileUrls.find((f) => f.type === "mls")?.url || null;
+  const photoUrls = fileUrls.filter((f) => f.type === "photo").map((f) => f.url);
+
   const automationPayload = {
     listing_id: listingId,
     client_id: guard.client.id,
+    mls_pdf: mlsPdf,
+    photo_urls: photoUrls,
     files: fileUrls,
   };
 
