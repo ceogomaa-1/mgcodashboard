@@ -4,8 +4,9 @@ import { requireRealEstateClient } from "@/lib/listings/realEstate";
 import { randomUUID } from "crypto";
 
 const BUCKET = "listing-uploads";
-const N8N_WEBHOOK_URL =
-  process.env.N8N_LISTING_WEBHOOK_URL || "http://localhost:5678/webhook-test/mgco/listing-autopilot";
+const AUTOMATION_WEBHOOK_URL =
+  process.env.LISTING_AUTOMATION_WEBHOOK_URL ||
+  "https://hooks.zapier.com/hooks/catch/15467201/u03h9xb/";
 
 function safeFileName(name: string) {
   return name.replace(/[^a-zA-Z0-9._-]+/g, "-");
@@ -132,35 +133,35 @@ export async function POST(req: Request) {
     return { path: u.path, type: u.type, url: data.publicUrl };
   });
 
-  const n8nPayload = {
+  const automationPayload = {
     listing_id: listingId,
     client_id: guard.client.id,
     files: fileUrls,
   };
 
-  let n8nResponse: unknown = null;
+  let automationResponse: unknown = null;
   let caption: string | null = null;
 
   try {
-    const webhookRes = await fetch(N8N_WEBHOOK_URL, {
+    const webhookRes = await fetch(AUTOMATION_WEBHOOK_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(n8nPayload),
+      body: JSON.stringify(automationPayload),
       cache: "no-store",
     });
 
     const contentType = webhookRes.headers.get("content-type") || "";
     const textBody = await webhookRes.text();
     if (!textBody.trim()) {
-      n8nResponse = null;
+      automationResponse = null;
     } else if (contentType.includes("application/json")) {
       try {
-        n8nResponse = JSON.parse(textBody);
+        automationResponse = JSON.parse(textBody);
       } catch {
-        n8nResponse = { raw: textBody };
+        automationResponse = { raw: textBody };
       }
     } else {
-      n8nResponse = { raw: textBody };
+      automationResponse = { raw: textBody };
     }
 
     if (!webhookRes.ok) {
@@ -168,32 +169,32 @@ export async function POST(req: Request) {
         .from("listings")
         .update({
           status: "error",
-          n8n_response: n8nResponse,
+          n8n_response: automationResponse,
         })
         .eq("id", listingId);
       await supabaseAdmin.from("listing_logs").insert({
         listing_id: listingId,
-        message: `n8n webhook failed with status ${webhookRes.status}`,
+        message: `automation webhook failed with status ${webhookRes.status}`,
       });
       return NextResponse.json(
-        { error: `n8n webhook failed (${webhookRes.status})`, listing_id: listingId },
+        { error: `automation webhook failed (${webhookRes.status})`, listing_id: listingId },
         { status: 502 }
       );
     }
 
-    caption = extractCaption(n8nResponse);
+    caption = extractCaption(automationResponse);
     await supabaseAdmin
       .from("listings")
       .update({
         status: caption ? "draft_ready" : "processing",
         caption,
-        n8n_response: n8nResponse,
+        n8n_response: automationResponse,
       })
       .eq("id", listingId);
 
     await supabaseAdmin.from("listing_logs").insert({
       listing_id: listingId,
-      message: "n8n workflow triggered successfully",
+      message: "automation webhook triggered successfully",
     });
   } catch (err: unknown) {
     const details = getErrorMessage(err);
@@ -205,11 +206,11 @@ export async function POST(req: Request) {
       .eq("id", listingId);
     await supabaseAdmin.from("listing_logs").insert({
       listing_id: listingId,
-      message: `n8n webhook error: ${details}`,
+      message: `automation webhook error: ${details}`,
     });
     return NextResponse.json(
       {
-        error: "Files uploaded but n8n webhook failed.",
+        error: "Files uploaded but automation webhook failed.",
         details,
         listing_id: listingId,
       },
@@ -225,8 +226,8 @@ export async function POST(req: Request) {
         caption,
       },
       files: fileUrls,
-      n8nPayload,
-      n8nResponse,
+      automationPayload,
+      automationResponse,
     },
     { status: 200 }
   );
